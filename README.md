@@ -234,7 +234,7 @@ CriticalityLevel=high       # Business criticality
 }
 ```
 
-## 📊 API Reference
+## API Reference
 
 ### Step Functions API
 
