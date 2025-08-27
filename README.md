@@ -1,9 +1,22 @@
-# 🔧 Enterprise EC2 Multi-Account Patching Platform
+<div align="center">
+  <img src="https://img.shields.io/badge/🔧-EC2%20Patching%20Platform-blue?style=for-the-badge&logoColor=white" alt="EC2 Patching"/>
+  <img src="https://img.shields.io/badge/🏢-Enterprise%20Scale-orange?style=for-the-badge" alt="Enterprise"/>
+  <img src="https://img.shields.io/badge/⚡-Production%20Ready-green?style=for-the-badge" alt="Production Ready"/>
+</div>
+
+<div align="center">
+  <h1>🔧 Enterprise EC2 Multi-Account Patching Platform</h1>
+  <p><strong>Production-grade EC2 patching orchestration for 1000+ AWS accounts</strong></p>
+</div>
+
+<div align="center">
 
 [![Hub Deploy](https://github.com/your-org/ec2-patching-workflow/workflows/Hub%20Deploy/badge.svg)](https://github.com/your-org/ec2-patching-workflow/actions)
 [![Spoke Deploy](https://github.com/your-org/ec2-patching-workflow/workflows/Spoke%20Deploy/badge.svg)](https://github.com/your-org/ec2-patching-workflow/actions)
 [![Security Scan](https://github.com/your-org/ec2-patching-workflow/workflows/Security%20Scan/badge.svg)](https://github.com/your-org/ec2-patching-workflow/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+</div>
 
 ## 🏆 Enterprise-Grade EC2 Patching Orchestration
 
