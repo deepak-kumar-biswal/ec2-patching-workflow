@@ -77,8 +77,8 @@ This is a **production-grade** EC2 patching solution designed for enterprise env
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/ec2-patching-workflow
-cd ec2-patching-workflow/terraform/hub
+git clone https://github.com/deepak-kumar-biswal/aws-platform-audit.git
+cd aws-platform-audit/ec2/ec2-patching-workflow/terraform/hub
 
 # Configure variables
 cp ../../examples/hub.auto.tfvars.example terraform.tfvars

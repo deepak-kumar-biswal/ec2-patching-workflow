@@ -11,9 +11,8 @@
 
 <div align="center">
 
-[![Hub Deploy](https://github.com/your-org/ec2-patching-workflow/workflows/Hub%20Deploy/badge.svg)](https://github.com/your-org/ec2-patching-workflow/actions)
-[![Spoke Deploy](https://github.com/your-org/ec2-patching-workflow/workflows/Spoke%20Deploy/badge.svg)](https://github.com/your-org/ec2-patching-workflow/actions)
-[![Security Scan](https://github.com/your-org/ec2-patching-workflow/workflows/Security%20Scan/badge.svg)](https://github.com/your-org/ec2-patching-workflow/actions)
+[![Deploy Hub (Terraform)](https://github.com/deepak-kumar-biswal/aws-platform-audit/workflows/Deploy%20Hub%20(Terraform)/badge.svg)](https://github.com/deepak-kumar-biswal/aws-platform-audit/actions)
+[![Deploy Spokes (Terraform Matrix)](https://github.com/deepak-kumar-biswal/aws-platform-audit/workflows/Deploy%20Spokes%20(Terraform%20Matrix)/badge.svg)](https://github.com/deepak-kumar-biswal/aws-platform-audit/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 </div>
@@ -24,15 +23,15 @@ This platform deploys a **production-grade** EC2 patching orchestrator using hub
 
 ## 📋 Table of Contents
 
-- [Architecture Overview](#architecture-overview)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Security Services](#security-services)
+- [🏗️ Architecture Overview](#️-architecture-overview)
+- [🚀 Quick Start](#-quick-start)
+- [⚙️ Configuration](#️-configuration)
+- [🛡️ Security Services](#️-security-services)
 - [API Reference](#api-reference)
-- [Monitoring](#monitoring)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [Support](#support)
+- [📈 Monitoring](#-monitoring)
+- [🔧 Troubleshooting](#-troubleshooting)
+- [🤝 Contributing](#-contributing)
+- [📞 Support](#-support)
 
 ## 🏗️ Architecture Overview
 
@@ -398,8 +397,8 @@ aws events list-targets-by-rule --rule ec2patch-wave1-critical
 
 1. **Clone Repository**
 ```bash
-git clone <repository-url>
-cd ec2-patching-workflow
+git clone https://github.com/deepak-kumar-biswal/aws-platform-audit.git
+cd aws-platform-audit/ec2/ec2-patching-workflow
 ```
 
 2. **Install Dependencies**
