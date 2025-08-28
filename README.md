@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/🔧-EC2%20Patching%20Platform-blue?style=for-the-badge&logoColor=white" alt="EC2 Patching"/>
-  <img src="https://img.shields.io/badge/🏢-Enterprise%20Scale-orange?style=for-the-badge" alt="Enterprise"/>
-  <img src="https://img.shields.io/badge/⚡-Production%20Ready-green?style=for-the-badge" alt="Production Ready"/>
+  <img src="https://img.shields.io/badge/%F0%9F%94%A7-EC2%20Patching%20Platform-blue?style=for-the-badge&logoColor=white" alt="EC2 Patching"/>
+  <img src="https://img.shields.io/badge/%F0%9F%8F%A2-Enterprise%20Scale-orange?style=for-the-badge" alt="Enterprise"/>
+  <img src="https://img.shields.io/badge/%E2%9A%A1-Production%20Ready-green?style=for-the-badge" alt="Production Ready"/>
 </div>
 
 <div align="center">
@@ -11,9 +11,10 @@
 
 <div align="center">
 
-[![Deploy Hub (Terraform)](https://github.com/deepak-kumar-biswal/aws-platform-audit/workflows/Deploy%20Hub%20(Terraform)/badge.svg)](https://github.com/deepak-kumar-biswal/aws-platform-audit/actions)
-[![Deploy Spokes (Terraform Matrix)](https://github.com/deepak-kumar-biswal/aws-platform-audit/workflows/Deploy%20Spokes%20(Terraform%20Matrix)/badge.svg)](https://github.com/deepak-kumar-biswal/aws-platform-audit/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Terraform](https://img.shields.io/badge/Terraform-1.5%2B-623CE4?style=for-the-badge&logo=terraform&logoColor=white)](https://www.terraform.io/)
+[![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/)
+[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 </div>
 
