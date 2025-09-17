@@ -98,6 +98,48 @@ See also: Operations Runbook in `docs/runbook-operations.md`.
 
 ## Runbook: Deploy and Operate
 
+### StartExecution input contract (copy/paste)
+
+Use this as a template when starting the Step Functions execution. Adjust waves, accounts, regions, tags, and SSM knobs to suit your window.
+
+```json
+{
+  "waves": [
+    {
+      "name": "canary",
+      "accounts": ["111111111111", "222222222222"],
+      "regions": ["us-east-1"],
+      "filters": {
+        "tags": { "PatchGroup": ["default"] },
+        "platforms": ["Linux", "Windows"]
+      },
+      "ssm": {
+        "maxConcurrency": "10%",
+        "maxErrors": "1",
+        "operation": "Install",
+        "rebootOption": "RebootIfNeeded"
+      }
+    }
+  ]
+}
+```
+
+Example (AWS CLI) to pass accounts and input JSON:
+
+```powershell
+# Save your input as run-input.json (see template above)
+aws stepfunctions start-execution \
+  --state-machine-arn arn:aws:states:us-east-1:<HUB_ACCOUNT>:stateMachine:<NAME_PREFIX>-orchestrator \
+  --name ec2patch-$(Get-Date -Format yyyyMMdd-HHmmss) \
+  --input file://run-input.json
+```
+
+Notes:
+
+- Only accounts with the spoke role deployed can be targeted; others will safely fail to assume role.
+- To split by OS, set `filters.platforms` to `["Linux"]` or `["Windows"]`, or use PatchGroup tags.
+- You can override `ssm.maxConcurrency`/`maxErrors` per wave to tune blast radius.
+
 For day-2 operations and incident handling, see the Ops Runbook: `docs/runbook-operations.md`.
 
 ### Prerequisites
