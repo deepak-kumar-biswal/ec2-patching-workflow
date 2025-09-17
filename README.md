@@ -1,21 +1,11 @@
-<div align="center">
-  <img src="https://img.shields.io/badge/%F0%9F%94%A7-EC2%20Patching%20Platform-blue?style=for-the-badge&logoColor=white" alt="EC2 Patching"/>
-  <img src="https://img.shields.io/badge/%F0%9F%8F%A2-Enterprise%20Scale-orange?style=for-the-badge" alt="Enterprise"/>
-  <img src="https://img.shields.io/badge/%E2%9A%A1-Production%20Ready-green?style=for-the-badge" alt="Production Ready"/>
-</div>
+# 🔧 Enterprise EC2 Multi-Account Patching Platform
 
-<div align="center">
-  <h1>🔧 Enterprise EC2 Multi-Account Patching Platform</h1>
-  <p><strong>Production-grade EC2 patching orchestration for 100s of AWS accounts (2k+ instances)</strong></p>
-</div>
+Production-grade EC2 patching orchestration for 100s of AWS accounts (2k+ instances)
 
-<div align="center">
 [![CloudFormation](https://img.shields.io/badge/CloudFormation-IaC-23A?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/cloudformation/)
 [![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
-
-</div>
 
 ## 🏆 Enterprise-Grade EC2 Patching Orchestration
 
