@@ -77,9 +77,11 @@ This platform deploys a **production-grade** EC2 patching orchestrator using a h
 
 Rendered AWS icon diagram of the solution:
 
-![Architecture Diagram](docs/diagrams/architecture.png)
+![Architecture Diagram (SVG)](docs/diagrams/architecture.svg)
 
-To update the image, regenerate it following docs/diagrams/README.md and commit the new PNG.
+If your viewer doesn't render SVG, use the PNG: [docs/diagrams/architecture.png](docs/diagrams/architecture.png)
+
+To update the diagram, regenerate both SVG and PNG following `docs/diagrams/README.md` and commit the outputs.
 
 ## Pre-Prod Checklist
 
@@ -111,6 +113,11 @@ See also: Operations Runbook in `docs/runbook-operations.md`.
 Quick actions:
 
 [Run single scenario](../../actions/workflows/patch-canary.yml) · [Run multi-scenario matrix](../../actions/workflows/patch-matrix.yml)
+
+[![Run single scenario](https://github.com/deepak-kumar-biswal/ec2-patching-workflow/actions/workflows/patch-canary.yml/badge.svg)](https://github.com/deepak-kumar-biswal/ec2-patching-workflow/actions/workflows/patch-canary.yml)
+[![Run matrix scenarios](https://github.com/deepak-kumar-biswal/ec2-patching-workflow/actions/workflows/patch-matrix.yml/badge.svg)](https://github.com/deepak-kumar-biswal/ec2-patching-workflow/actions/workflows/patch-matrix.yml)
+
+Tip: When dispatching the matrix workflow, you can point to a custom directory by setting the input `inputs_prefix` (for example `examples/custom-inputs/`) and listing scenarios (for example `wave-canary-east,wave-main-multi`).
 
 ### StartExecution input contract (copy/paste)
 
