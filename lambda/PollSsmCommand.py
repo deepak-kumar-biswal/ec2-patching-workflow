@@ -16,6 +16,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+s3_client = boto3.client('s3')
+
 class SSMPollingError(Exception):
     """Custom exception for SSM polling operations"""
     pass
@@ -103,7 +105,10 @@ def validate_input(event: Dict[str, Any]) -> Dict[str, Any]:
         'command_id': command_id,
         'account_id': event.get('accountId', 'unknown'),
         'execution_id': event.get('executionId', 'unknown'),
-        'external_id': event.get('externalId', '')
+        'external_id': event.get('externalId', ''),
+        'store_output': bool(event.get('storeOutput', False)),
+        'output_s3_bucket': event.get('outputS3Bucket'),
+        'output_s3_prefix': event.get('outputS3Prefix')
     }
 
 @retry_with_backoff(max_retries=3)
@@ -291,6 +296,48 @@ def analyze_command_status(invocations: List[Dict[str, Any]], command_id: str) -
     
     return result
 
+def _put_text(bucket: str, key: str, content: str) -> None:
+    s3_client.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=(content or '').encode('utf-8'),
+        ContentType='text/plain'
+    )
+
+def persist_outputs(ssm_client, command_id: str, bucket: str, prefix: str, invocations: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Fetch per-instance stdout/stderr via SSM and store in S3 under the given prefix."""
+    saved: Dict[str, Dict[str, str]] = {}
+    for inv in invocations:
+        instance_id = inv.get('InstanceId', 'unknown')
+        try:
+            resp = ssm_client.get_command_invocation(CommandId=command_id, InstanceId=instance_id, PluginName='aws:runShellScript')
+        except Exception:
+            # Try PowerShell plugin name for Windows
+            try:
+                resp = ssm_client.get_command_invocation(CommandId=command_id, InstanceId=instance_id, PluginName='aws:runPowerShellScript')
+            except Exception as e:
+                logger.warning(f"Failed to get command invocation output for {instance_id}: {e}")
+                continue
+        stdout = resp.get('StandardOutputContent', '')
+        stderr = resp.get('StandardErrorContent', '')
+        base = f"{prefix}/{instance_id}"
+        try:
+            _put_text(bucket, f"{base}/stdout.txt", stdout)
+            _put_text(bucket, f"{base}/stderr.txt", stderr)
+            meta = {
+                'instance_id': instance_id,
+                'response_code': resp.get('ResponseCode'),
+                'status': resp.get('Status'),
+                'execution_elapsed_millis': resp.get('ExecutionElapsedTime'),
+                'plugin_name': resp.get('PluginName')
+            }
+            s3_client.put_object(Bucket=bucket, Key=f"{base}/meta.json", Body=json.dumps(meta, indent=2).encode('utf-8'), ContentType='application/json')
+            saved[instance_id] = { 'stdout': f"s3://{bucket}/{base}/stdout.txt", 'stderr': f"s3://{bucket}/{base}/stderr.txt" }
+        except Exception as e:
+            logger.warning(f"Failed to store outputs for {instance_id} to S3: {e}")
+            continue
+    return { 'saved': saved }
+
 @with_correlation_id
 def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
     """
@@ -323,6 +370,20 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
         
         # Analyze status
         status_analysis = analyze_command_status(invocations, command_id)
+
+        # Optionally persist outputs to S3 from hub
+        persisted: Dict[str, Any] = {}
+        if validated_data['store_output'] and validated_data['output_s3_bucket'] and validated_data['output_s3_prefix']:
+            try:
+                persisted = persist_outputs(
+                    ssm_client,
+                    command_id,
+                    validated_data['output_s3_bucket'],
+                    validated_data['output_s3_prefix'],
+                    invocations,
+                )
+            except Exception as pe:
+                logger.warning(f"Failed persisting outputs to S3: {pe}")
         
         execution_time = time.time() - start_time
         
@@ -334,7 +395,8 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
             'timestamp': time.time(),
             'account_id': account_id,
             'region': region,
-            'execution_id': execution_id
+            'execution_id': execution_id,
+            'persisted': persisted
         }
         
         logger.info(f"SSM polling completed in {execution_time:.2f}s")

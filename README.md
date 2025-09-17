@@ -27,6 +27,29 @@ This platform deploys a **production-grade** EC2 patching orchestrator using a h
 - [Ops Runbook](docs/runbook-operations.md)
 - [CI/CD](#cicd)
 
+## Pre-collection (hub-write) quick reference
+
+When enabled, the orchestrator runs a lightweight pre-collection step on targets before patching and stores results centrally in the hub S3 bucket (no cross-account S3/KMS access from spokes). The poller fetches SSM stdout/stderr per instance and writes them to S3.
+
+- Enable via execution input: set `preCollect.enabled: true`.
+- Linux runs `AWS-RunShellScript`; Windows runs `AWS-RunPowerShellScript`.
+- Artifacts are written under this path pattern:
+  - `s3://<SnapshotsBucket>/runs/<ExecutionId>/pre/account-<AccountId>/region-<Region>/<os>/<InstanceId>/`
+  - Files per instance:
+    - `stdout.txt` – SSM standard output
+    - `stderr.txt` – SSM standard error
+    - `meta.json` – basic metadata (status, response code, plugin)
+
+Example keys:
+
+```text
+runs/ex-1234567890/pre/account-111111111111/region-us-east-1/linux/i-0abc1234/stdout.txt
+runs/ex-1234567890/pre/account-111111111111/region-us-east-1/linux/i-0abc1234/stderr.txt
+runs/ex-1234567890/pre/account-111111111111/region-us-east-1/linux/i-0abc1234/meta.json
+```
+
+Tip: Use these snapshots to quickly assess OS details, services, ports, disk/memory, and uptime before the patch window. The step is non-blocking; errors are logged but won’t stop patching.
+
 ## Architecture Overview
 
 ```text
@@ -77,9 +100,7 @@ This platform deploys a **production-grade** EC2 patching orchestrator using a h
 
 Rendered AWS icon diagram of the solution:
 
-![Architecture Diagram (SVG)](docs/diagrams/architecture.svg)
-
-If your viewer doesn't render SVG, use the PNG: [docs/diagrams/architecture.png](docs/diagrams/architecture.png)
+![Architecture Diagram](docs/diagrams/architecture.png)
 
 To update the diagram, regenerate both SVG and PNG following `docs/diagrams/README.md` and commit the outputs.
 
@@ -503,15 +524,20 @@ aws stepfunctions describe-execution \
 
 ### CloudWatch Dashboard
 
-Key metrics monitored:
+A purpose-built CloudWatch dashboard is deployed with the Hub stack:
 
-- **Patch Success Rate**: % of successful patches per wave
-- **Instance Availability**: Pre/post-patch instance health
-- **Execution Duration**: Time taken per patching wave
-- **Error Rates**: Failed patches and root causes
-- **Compliance Drift**: Instances falling behind patch levels
+- Name: `${NamePrefix}-${Environment}-orchestrator`
+- Where: CloudWatch > Dashboards (in the hub region)
 
-A CloudWatch dashboard named `${name_prefix}-dashboard` is created with Step Functions and Lambda error metrics.
+Included widgets (5-minute period unless noted):
+
+- Step Functions executions: Started, Succeeded, Failed, Aborted, TimedOut, Throttled
+- Step Functions average ExecutionTime (ms)
+- API Gateway (HTTP API) 4xx and 5xx by stage
+- Lambda core functions: Invocations, Errors, Duration p95, Throttles
+- DynamoDB (PatchRuns): ThrottledRequests, ConsumedRead/Write Capacity Units
+- Alarms widget: shows the orchestrator failure alarm
+- Logs Insights table: recent ERROR/Exception entries from the orchestrator log group
 
 ### Alerting Configuration
 
@@ -551,6 +577,28 @@ aws stepfunctions get-execution-history \
 ## Troubleshooting
 
 ### Common Issues
+
+#### Quick: find pre-collect artifacts by execution ID
+
+Use the Step Functions execution ID to jump straight to the S3 folder. Artifacts live under:
+
+`runs/<ExecutionId>/pre/account-<AccountId>/region-<Region>/<os>/<InstanceId>/`
+
+In the S3 console, paste `runs/<ExecutionId>/pre/` in the prefix filter to see per-account/region splits. CLI example (list first 20 keys):
+
+```bash
+aws s3api list-objects-v2 \
+  --bucket <SnapshotsBucket> \
+  --prefix runs/<ExecutionId>/pre/ \
+  --max-keys 20 \
+  --query 'Contents[].Key'
+```
+
+Then fetch a specific file for a given instance:
+
+```bash
+aws s3 cp s3://<SnapshotsBucket>/runs/<ExecutionId>/pre/account-<AccountId>/region-<Region>/<os>/<InstanceId>/stdout.txt -
+```
 
 #### 1. Cross-Account Role Assumption Failed
 

@@ -16,6 +16,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Constants for CloudWatch custom metrics
+METRICS_NAMESPACE = os.environ.get("METRICS_NAMESPACE", "EC2Patching/Orchestrator")
+NAME_PREFIX = os.environ.get("NAME_PREFIX", "ec2-patch")
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
+
 class PostVerificationError(Exception):
     """Custom exception for post-patching verification operations"""
     pass
@@ -391,6 +396,39 @@ def process_account_region(
         # Store summary in DynamoDB
         store_results_dynamodb(ddb_table, ddb_record)
         
+        # Emit per-region custom metrics
+        try:
+            cw = boto3.client("cloudwatch")
+            dims = [
+                {"Name": "NamePrefix", "Value": NAME_PREFIX},
+                {"Name": "Environment", "Value": ENVIRONMENT},
+                {"Name": "AccountId", "Value": account},
+                {"Name": "Region", "Value": region},
+            ]
+            metrics = [
+                {
+                    "MetricName": "SuccessRate",
+                    "Dimensions": dims,
+                    "Unit": "Percent",
+                    "Value": float(analysis['success_rate'])
+                },
+                {
+                    "MetricName": "InstancesTotal",
+                    "Dimensions": dims,
+                    "Unit": "Count",
+                    "Value": float(analysis['total_instances'])
+                },
+                {
+                    "MetricName": "InstancesWithIssues",
+                    "Dimensions": dims,
+                    "Unit": "Count",
+                    "Value": float(analysis['problematic_instances'])
+                }
+            ]
+            cw.put_metric_data(Namespace=METRICS_NAMESPACE, MetricData=metrics)
+        except Exception as me:
+            logger.warning(f"Failed to publish metrics to CloudWatch for {account}:{region}: {me}")
+
         result = {
             'account': account,
             'region': region,

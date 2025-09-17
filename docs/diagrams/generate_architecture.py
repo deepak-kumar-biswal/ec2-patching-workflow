@@ -117,20 +117,21 @@ def render(outfmt: str = "png") -> None:
 
         # Parameters & Limits section removed for a cleaner layout
 
-        # Spokes (split by OS)
+        # Spokes (split by OS) - arrange horizontally
         with Cluster("Spoke Accounts (Targets)"):
             with Cluster("Spoke 1..N"):
                 iam = IAM("Cross-Account Execute Role\n(ExternalId)")
                 with Cluster("Regions"):
-                    with Cluster("Region A..Z"):
-                        with Cluster("Windows Targets"):
-                            ec2_win = EC2("Windows (Tagged)")
-                        with Cluster("Linux Targets"):
-                            ec2_lin = EC2("Linux (Tagged)")
+                    # Keep OS targets on the same horizontal rank within each region
+                    with Cluster("Region A..Z", graph_attr={"rank": "same"}):
+                        ec2_win = EC2("Windows (Tagged)")
+                        ec2_lin = EC2("Linux (Tagged)")
+                        # Invisible edge nudges Graphviz to keep them side-by-side
+                        ec2_win >> Edge(style="invis", weight="100", constraint="true") >> ec2_lin
 
         # Cross-account assume role path
         for fn in [inv, send, poll, post]:
-            fn >> Edge(label="AssumeRole", style="dashed", color="gray50") >> iam
+            fn >> Edge(label="AssumeRole", style="dashed", color="gray50", constraint="false") >> iam
 
         # SSM Run Command path (conceptual)
         send >> Edge(label="RunPatchBaseline", color="steelblue") >> ec2_win

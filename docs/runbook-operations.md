@@ -31,6 +31,17 @@ This runbook covers day-2 operations for the EC2 Patching Orchestrator.
 - Step Functions execution history: inspect failed branches and inputs/outputs.
 - Lambda logs: `/aws/lambda/<function-name>`; check error traces and contextual logs.
 - SSM: review command invocations for failing instances and S3-captured outputs.
+ - Pre-collection (hub-write): use the execution ID to locate snapshots quickly in the hub S3 bucket under:
+	 - `runs/<ExecutionId>/pre/account-<AccountId>/region-<Region>/<os>/<InstanceId>/`
+	 - Files per instance: `stdout.txt`, `stderr.txt`, `meta.json`
+	 - Example (list first 20 keys):
+		 ```bash
+		 aws s3api list-objects-v2 \
+			 --bucket <SnapshotsBucket> \
+			 --prefix runs/<ExecutionId>/pre/ \
+			 --max-keys 20 \
+			 --query 'Contents[].Key'
+		 ```
 
 ## 6. Retry Strategy
 

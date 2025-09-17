@@ -268,6 +268,15 @@ Resources:
               - Effect: Allow
                 Action: [ ssm:ListCommandInvocations, ssm:ListCommands ]
                 Resource: '*'
+              - Effect: Allow
+                Action: [ ssm:GetCommandInvocation ]
+                Resource: '*'
+              - Effect: Allow
+                Action: [ s3:PutObject, s3:PutObjectTagging, s3:AbortMultipartUpload ]
+                Resource: !Sub '${SnapshotsBucket.Arn}/*'
+              - Effect: Allow
+                Action: [ kms:Encrypt, kms:GenerateDataKey* ]
+                Resource: !Ref KmsKey
 
   SendSsmCommandRole:
     Type: AWS::IAM::Role
@@ -317,6 +326,12 @@ Resources:
               - Effect: Allow
                 Action: [ dynamodb:PutItem ]
                 Resource: !GetAtt PatchRunsTable.Arn
+              - Effect: Allow
+                Action: [ cloudwatch:PutMetricData ]
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: 'EC2Patching/Orchestrator'
 
   SendApprovalRequestRole:
     Type: AWS::IAM::Role
@@ -686,8 +701,140 @@ Resources:
                           account.$: '$.account'
                         MaxConcurrency: !Ref RegionMaxConcurrency
                         Iterator:
-                          StartAt: SendSSM
+                          StartAt: PreCollectEnabled?
                           States:
+                            PreCollectEnabled?:
+                              Type: Choice
+                              Choices:
+                                - Variable: '$$.Execution.Input.preCollect.enabled'
+                                  BooleanEquals: true
+                                  Next: PreCollect
+                              Default: SendSSM
+                            PreCollect:
+                              Type: Parallel
+                              Catch:
+                                - ErrorEquals: [ States.ALL ]
+                                  ResultPath: $.precollect_error
+                                  Next: SendSSM
+                              Branches:
+                                - StartAt: PreCollectLinux
+                                  States:
+                                    PreCollectLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.prelinux
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName: 'AWS-RunShellScript'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          parameters:
+                                            commands:
+                                              - 'uname -a'
+                                              - 'cat /etc/os-release || true'
+                                              - 'date -Is'
+                                              - 'df -h'
+                                              - 'free -m || true'
+                                              - 'ps aux --sort=-%cpu | head -n 30'
+                                              - 'systemctl list-units --type=service --state=running | head -n 100 || true'
+                                              - 'ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null || true'
+                                              - 'ip addr'
+                                              - 'uptime'
+                      # No direct SSM S3 output; outputs will be persisted by hub poller
+                                      Next: PollPreLinux
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.prelinux_error
+                                          Next: SkipPreLinuxPoll
+                                    PollPreLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.pollprelinux
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.prelinux.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/pre/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipPreLinuxPoll:
+                                      Type: Pass
+                                      End: true
+                                - StartAt: PreCollectWindows
+                                  States:
+                                    PreCollectWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.prewindows
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName: 'AWS-RunPowerShellScript'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          parameters:
+                                            commands:
+                                              - 'systeminfo'
+                                              - 'Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber,LastBootUpTime'
+                                              - 'Get-HotFix | Select-Object HotFixID,InstalledOn | Sort-Object InstalledOn -Descending | Select-Object -First 50'
+                                              - 'Get-Service | Where-Object {$_.Status -eq "Running"} | Select-Object Name,DisplayName,Status | Sort-Object Name'
+                                              - 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 50 Name,Id,CPU,WS'
+                                              - 'Get-Volume | Select-Object DriveLetter,FileSystemLabel,FileSystem,Size,SizeRemaining'
+                                              - 'Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess -First 100'
+                      # No direct SSM S3 output; outputs will be persisted by hub poller
+                                      Next: PollPreWindows
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.prewindows_error
+                                          Next: SkipPreWindowsPoll
+                                    PollPreWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.pollprewindows
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.prewindows.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/pre/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipPreWindowsPoll:
+                                      Type: Pass
+                                      End: true
+                              Next: SendSSM
                             SendSSM:
                               Type: Task
                               Resource: arn:aws:states:::lambda:invoke
@@ -819,6 +966,210 @@ Resources:
       AlarmActions:
         - !Ref ApprovalTopic
 
+  OrchestratorDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${NamePrefix}-${Environment}-orchestrator'
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0, "y": 0, "width": 24, "height": 6,
+                "properties": {
+                  "title": "Step Functions: Executions",
+                  "region": "${AWS::Region}",
+                  "view": "timeSeries",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    ["AWS/States","ExecutionsStarted","StateMachineArn","${OrchestratorStateMachine}"],
+                    ["AWS/States","ExecutionsSucceeded","StateMachineArn","${OrchestratorStateMachine}"],
+                    ["AWS/States","ExecutionsFailed","StateMachineArn","${OrchestratorStateMachine}"],
+                    ["AWS/States","ExecutionsAborted","StateMachineArn","${OrchestratorStateMachine}"],
+                    ["AWS/States","ExecutionsTimedOut","StateMachineArn","${OrchestratorStateMachine}"],
+                    ["AWS/States","ExecutionsThrottled","StateMachineArn","${OrchestratorStateMachine}"]
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 6, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Step Functions: ExecutionTime (avg ms)",
+                  "region": "${AWS::Region}",
+                  "view": "timeSeries",
+                  "stat": "Average",
+                  "period": 300,
+                  "metrics": [
+                    ["AWS/States","ExecutionTime","StateMachineArn","${OrchestratorStateMachine}"]
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 6, "width": 12, "height": 6,
+                "properties": {
+                  "title": "API (HTTP API): 4xx/5xx",
+                  "region": "${AWS::Region}",
+                  "view": "timeSeries",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    ["AWS/ApiGateway","4xx","ApiId","${ApprovalApi}","Stage","${Environment}"],
+                    ["AWS/ApiGateway","5xx","ApiId","${ApprovalApi}","Stage","${Environment}"]
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 12, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Lambda: Invocations (core)",
+                  "region": "${AWS::Region}",
+                  "view": "timeSeries",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    ["AWS/Lambda","Invocations","FunctionName","${PreEC2InventoryFunction}"],
+                    ["AWS/Lambda","Invocations","FunctionName","${SendSsmCommandFunction}"],
+                    ["AWS/Lambda","Invocations","FunctionName","${PollSsmCommandFunction}"],
+                    ["AWS/Lambda","Invocations","FunctionName","${PostEC2VerifyFunction}"]
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 12, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Lambda: Errors (core)",
+                  "region": "${AWS::Region}",
+                  "view": "timeSeries",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    ["AWS/Lambda","Errors","FunctionName","${PreEC2InventoryFunction}"],
+                    ["AWS/Lambda","Errors","FunctionName","${SendSsmCommandFunction}"],
+                    ["AWS/Lambda","Errors","FunctionName","${PollSsmCommandFunction}"],
+                    ["AWS/Lambda","Errors","FunctionName","${PostEC2VerifyFunction}"]
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 18, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Lambda: Duration p95 (ms)",
+                  "region": "${AWS::Region}",
+                  "view": "timeSeries",
+                  "stat": "p95",
+                  "period": 300,
+                  "metrics": [
+                    ["AWS/Lambda","Duration","FunctionName","${PreEC2InventoryFunction}"],
+                    ["AWS/Lambda","Duration","FunctionName","${SendSsmCommandFunction}"],
+                    ["AWS/Lambda","Duration","FunctionName","${PollSsmCommandFunction}"],
+                    ["AWS/Lambda","Duration","FunctionName","${PostEC2VerifyFunction}"]
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 18, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Lambda: Throttles",
+                  "region": "${AWS::Region}",
+                  "view": "timeSeries",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    ["AWS/Lambda","Throttles","FunctionName","${PreEC2InventoryFunction}"],
+                    ["AWS/Lambda","Throttles","FunctionName","${SendSsmCommandFunction}"],
+                    ["AWS/Lambda","Throttles","FunctionName","${PollSsmCommandFunction}"],
+                    ["AWS/Lambda","Throttles","FunctionName","${PostEC2VerifyFunction}"]
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 24, "width": 12, "height": 6,
+                "properties": {
+                  "title": "DynamoDB: Throttled Requests",
+                  "region": "${AWS::Region}",
+                  "view": "timeSeries",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    ["AWS/DynamoDB","ThrottledRequests","TableName","${PatchRunsTable}"]
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 24, "width": 12, "height": 6,
+                "properties": {
+                  "title": "DynamoDB: Consumed RCUs/WCUs",
+                  "region": "${AWS::Region}",
+                  "view": "timeSeries",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    ["AWS/DynamoDB","ConsumedReadCapacityUnits","TableName","${PatchRunsTable}"],
+                    ["AWS/DynamoDB","ConsumedWriteCapacityUnits","TableName","${PatchRunsTable}"]
+                  ]
+                }
+              },
+              {
+                "type": "alarm",
+                "x": 0, "y": 30, "width": 6, "height": 4,
+                "properties": {
+                  "title": "Alarms",
+                  "alarms": [ "${FailedAlarmArn}" ]
+                }
+              },
+              {
+                "type": "log",
+                "x": 6, "y": 30, "width": 18, "height": 6,
+                "properties": {
+                  "title": "Recent Errors (Step Functions Log)",
+                  "region": "${AWS::Region}",
+                  "query": "SOURCE '/aws/states/${NamePrefix}-${Environment}-orchestrator' | fields @timestamp, @message | filter @message like /ERROR|Exception/ | sort @timestamp desc | limit 50",
+                  "view": "table"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 36, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Patching SuccessRate (%) by Account/Region",
+                  "region": "${AWS::Region}",
+                  "stat": "Average",
+                  "period": 300,
+                  "view": "timeSeries",
+                  "yAxis": {"left": {"min": 0, "max": 100}},
+                  "metrics": [
+                    [ { "expression": "SEARCH('{EC2Patching/Orchestrator,NamePrefix,Environment,AccountId,Region} MetricName=\"SuccessRate\" NamePrefix=\"${NamePrefix}\" Environment=\"${Environment}\"', 'Average', 300)", "label": "SuccessRate", "id": "m1" } ]
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 36, "width": 12, "height": 6,
+                "properties": {
+                  "title": "Instances With Issues (sum)",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 300,
+                  "view": "timeSeries",
+                  "metrics": [
+                    [ { "expression": "SEARCH('{EC2Patching/Orchestrator,NamePrefix,Environment,AccountId,Region} MetricName=\"InstancesWithIssues\" NamePrefix=\"${NamePrefix}\" Environment=\"${Environment}\"', 'Sum', 300)", "label": "InstancesWithIssues", "id": "m2" } ]
+                  ]
+                }
+              }
+            ]
+          }
+        - { FailedAlarmArn: !GetAtt StateMachineFailedAlarm.Arn }
+
 Outputs:
   ApiUrl:
     Value: !Sub 'https://${ApprovalApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
@@ -830,3 +1181,6 @@ Outputs:
     Value: !Ref SnapshotsBucket
   StateMachineArn:
     Value: !Ref OrchestratorStateMachine
+  DashboardName:
+    Description: CloudWatch dashboard for the orchestrator
+    Value: !Ref OrchestratorDashboard
