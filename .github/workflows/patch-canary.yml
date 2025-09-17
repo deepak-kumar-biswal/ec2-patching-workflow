@@ -1,0 +1,66 @@
+name: patch-canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Select an input scenario JSON
+        required: true
+        type: choice
+        options:
+          - canary-small
+          - windows-only-multi-region
+          - linux-by-tags
+          - multi-wave-staggered
+          - scan-no-reboot
+        default: canary-small
+      state_machine_arn:
+        description: State machine ARN to invoke
+        required: true
+        type: string
+      aws_region:
+        description: AWS Region
+        required: true
+        type: string
+        default: us-east-1
+      role_to_assume:
+        description: IAM Role ARN (with permission to StartExecution)
+        required: true
+        type: string
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.role_to_assume }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Map scenario to file
+        id: map
+        shell: bash
+        run: |
+          case "${{ inputs.scenario }}" in
+            canary-small) FILE="canary-small.json";;
+            windows-only-multi-region) FILE="windows-only-multi-region.json";;
+            linux-by-tags) FILE="linux-by-tags.json";;
+            multi-wave-staggered) FILE="multi-wave-staggered.json";;
+            scan-no-reboot) FILE="scan-no-reboot.json";;
+            *) echo "Unknown scenario: ${{ inputs.scenario }}"; exit 1;;
+          esac
+          echo "file=$FILE" >> $GITHUB_OUTPUT
+
+      - name: Start Step Functions execution
+        run: |
+          aws stepfunctions start-execution \
+            --state-machine-arn "${{ inputs.state_machine_arn }}" \
+            --name "ec2patch-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --input "file://examples/run-inputs/${{ steps.map.outputs.file }}"

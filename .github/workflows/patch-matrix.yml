@@ -1,0 +1,78 @@
+name: patch-matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      state_machine_arn:
+        description: State machine ARN to invoke
+        required: true
+        type: string
+      aws_region:
+        description: AWS Region
+        required: true
+        type: string
+        default: us-east-1
+      role_to_assume:
+        description: IAM Role ARN (with permission to StartExecution)
+        required: true
+        type: string
+      scenarios:
+        description: Comma-separated scenario names (from examples/run-inputs)
+        required: false
+        type: string
+        default: canary-small,windows-only-multi-region,linux-by-tags
+      inputs_prefix:
+        description: Directory prefix for scenario JSON files (trailing slash required)
+        required: false
+        type: string
+        default: examples/run-inputs/
+
+jobs:
+  fanout:
+    runs-on: ubuntu-latest
+    outputs:
+      scenarios: ${{ steps.set-matrix.outputs.scenarios }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set-matrix
+        shell: bash
+        run: |
+          IFS=',' read -ra ARR <<< "${{ inputs.scenarios }}"
+          JSON=$(printf '%s\n' "${ARR[@]}" | jq -R . | jq -s .)
+          echo "scenarios=$JSON" >> $GITHUB_OUTPUT
+
+  run:
+    needs: fanout
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJson(needs.fanout.outputs.scenarios) }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.role_to_assume }}
+          aws-region: ${{ inputs.aws_region }}
+      - name: Map scenario to file
+        id: map
+        shell: bash
+        run: |
+          case "${{ matrix.scenario }}" in
+            canary-small) FILE="canary-small.json";;
+            windows-only-multi-region) FILE="windows-only-multi-region.json";;
+            linux-by-tags) FILE="linux-by-tags.json";;
+            multi-wave-staggered) FILE="multi-wave-staggered.json";;
+            scan-no-reboot) FILE="scan-no-reboot.json";;
+            *) echo "Unknown scenario: ${{ matrix.scenario }}"; exit 1;;
+          esac
+          echo "file=$FILE" >> $GITHUB_OUTPUT
+      - name: Start Step Functions execution
+        run: |
+          aws stepfunctions start-execution \
+            --state-machine-arn "${{ inputs.state_machine_arn }}" \
+            --name "ec2patch-${{ matrix.scenario }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --input "file://${{ inputs.inputs_prefix }}${{ steps.map.outputs.file }}"

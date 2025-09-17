@@ -14,6 +14,7 @@ This platform deploys a **production-grade** EC2 patching orchestrator using a h
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
+- [Architecture Diagram](#architecture-diagram)
 - [Pre-Prod Checklist](#pre-prod-checklist)
 - [Runbook: Deploy and Operate](#runbook-deploy-and-operate)
 - [Configuration](#configuration)
@@ -24,6 +25,7 @@ This platform deploys a **production-grade** EC2 patching orchestrator using a h
 - [Contributing](#contributing)
 - [Support](#support)
 - [Ops Runbook](docs/runbook-operations.md)
+- [CI/CD](#cicd)
 
 ## Architecture Overview
 
@@ -71,6 +73,14 @@ This platform deploys a **production-grade** EC2 patching orchestrator using a h
 - **✅ Approval Gates**: Manual approval workflow with SNS notifications
 - **📊 Monitoring**: Real-time dashboards and alerting
 
+## Architecture Diagram
+
+Rendered AWS icon diagram of the solution:
+
+![Architecture Diagram](docs/diagrams/architecture.png)
+
+To update the image, regenerate it following docs/diagrams/README.md and commit the new PNG.
+
 ## Pre-Prod Checklist
 
 Use this quick checklist before your first production run:
@@ -97,6 +107,10 @@ Use this quick checklist before your first production run:
 See also: Operations Runbook in `docs/runbook-operations.md`.
 
 ## Runbook: Deploy and Operate
+
+Quick actions:
+
+[Run single scenario](../../actions/workflows/patch-canary.yml) · [Run multi-scenario matrix](../../actions/workflows/patch-matrix.yml)
 
 ### StartExecution input contract (copy/paste)
 
@@ -141,6 +155,180 @@ Notes:
 - You can override `ssm.maxConcurrency`/`maxErrors` per wave to tune blast radius.
 
 For day-2 operations and incident handling, see the Ops Runbook: `docs/runbook-operations.md`.
+
+### More scenarios: ready-to-use inputs
+
+Pick one of these inputs and adjust IDs/regions/tags. We’ve committed them under `examples/run-inputs/` so you can use them directly.
+
+- Canary, single account/region: `examples/run-inputs/canary-small.json`
+- Windows-only, multi-account, multi-region: `examples/run-inputs/windows-only-multi-region.json`
+- Linux-only by tags (prod web/app), no reboot: `examples/run-inputs/linux-by-tags.json`
+- Two waves (canary → main), different SSM knobs: `examples/run-inputs/multi-wave-staggered.json`
+- Dry run (scan only), no reboot: `examples/run-inputs/scan-no-reboot.json`
+
+Run examples
+
+```powershell
+# PowerShell (dynamic name)
+aws stepfunctions start-execution \
+  --state-machine-arn arn:aws:states:us-east-1:<HUB_ACCOUNT>:stateMachine:<NAME_PREFIX>-orchestrator \
+  --name ec2patch-$(Get-Date -Format yyyyMMdd-HHmmss) \
+  --input file://examples/run-inputs/canary-small.json
+```
+
+```cmd
+:: Windows cmd (simple static name; make it unique per run)
+aws stepfunctions start-execution --state-machine-arn arn:aws:states:us-east-1:<HUB_ACCOUNT>:stateMachine:<NAME_PREFIX>-orchestrator --name ec2patch-manual-001 --input file://examples\run-inputs\canary-small.json
+```
+
+Use a custom inputs directory with the matrix workflow:
+
+```text
+Inputs prefix: examples/custom-inputs/
+Scenarios: wave-canary-east,wave-main-multi
+```
+
+Then run the matrix workflow and set:
+
+- inputs_prefix = examples/custom-inputs/
+- scenarios = wave-canary-east,wave-main-multi
+
+### Who calls the Step Function? How do we pass JSON?
+
+You have three common options. All of them pass the same JSON payload shown above.
+
+1. On-demand (CLI/SDK/Console)
+
+- AWS Console: Open the state machine → Start execution → paste JSON.
+- AWS CLI/SDK: Use `start-execution` with `--input file://...` as shown.
+
+1. CI/CD (GitHub Actions with OIDC)
+
+Minimal job example:
+
+```yaml
+name: patch-canary
+on: workflow_dispatch
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write     # for OIDC
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::<HUB_ACCOUNT>:role/<DeployOrchestratorRole>
+          aws-region: us-east-1
+      - name: Start execution
+        run: |
+          aws stepfunctions start-execution \
+            --state-machine-arn arn:aws:states:us-east-1:<HUB_ACCOUNT>:stateMachine:<NAME_PREFIX>-orchestrator \
+            --name ec2patch-${{ github.run_id }} \
+            --input file://examples/run-inputs/canary-small.json
+```
+
+1. Scheduled (EventBridge)
+
+You can schedule patch waves on a cron using either EventBridge Scheduler (recommended) or a classic EventBridge Rule (CloudWatch Events). Both support passing JSON input.
+
+- EventBridge Scheduler (recommended)
+
+```yaml
+Resources:
+  PatchMonthly:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: ec2patch-monthly
+      ScheduleExpression: 'cron(0 5 ? * SUN#1 *)'  # First Sunday 05:00 UTC
+      FlexibleTimeWindow:
+        Mode: OFF
+      Target:
+        Arn: arn:aws:states:us-east-1:<HUB_ACCOUNT>:stateMachine:<NAME_PREFIX>-orchestrator
+        RoleArn: arn:aws:iam::<HUB_ACCOUNT>:role/<SchedulerInvokeRole>
+        Input: |
+          { "waves": [
+            { "name": "wave1",
+              "accounts": ["111111111111"],
+              "regions": ["us-east-1"],
+              "filters": { "tags": { "PatchGroup": ["default"] }, "platforms": ["Linux","Windows"] },
+              "ssm": { "maxConcurrency": "10%", "maxErrors": "1", "operation": "Install", "rebootOption": "RebootIfNeeded" }
+            }
+          ]}
+```
+
+- EventBridge Rule (classic)
+
+```yaml
+Resources:
+  PatchWindowRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: ec2patch-window
+      ScheduleExpression: 'cron(0 5 ? * SUN#1 *)'
+      State: ENABLED
+      Targets:
+        - Id: StartPatchOrchestrator
+          Arn: arn:aws:states:us-east-1:<HUB_ACCOUNT>:stateMachine:<NAME_PREFIX>-orchestrator
+          RoleArn: arn:aws:iam::<HUB_ACCOUNT>:role/<EventsInvokeRole>
+          Input: |
+            { "waves": [
+              { "name": "wave1",
+                "accounts": ["111111111111"],
+                "regions": ["us-east-1"],
+                "filters": { "tags": { "PatchGroup": ["default"] }, "platforms": ["Linux","Windows"] },
+                "ssm": { "maxConcurrency": "10%", "maxErrors": "1", "operation": "Install", "rebootOption": "RebootIfNeeded" }
+              }
+            ]}
+```
+
+Notes
+
+- Ensure the invoke role used by Scheduler/Events has `states:StartExecution` permission on the state machine.
+- Input must be valid JSON (escape quotes if inlined into YAML). Keep it under service limits (≤ 256 KB).
+- For advanced templating, use InputTransformer or Scheduler time-based tokens if needed.
+- See `cloudformation/scheduler-example.yaml` for a parameterized Scheduler you can deploy as-is.
+- Prefer a GitHub-driven run? Use `.github/workflows/patch-canary.yml` and choose a scenario from `examples/run-inputs/`.
+
+#### Minimal IAM for Invoke Role
+
+Trust policy (allow EventBridge Scheduler/Events to assume the role):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": [
+          "scheduler.amazonaws.com",
+          "events.amazonaws.com"
+        ]
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+Permissions policy (allow starting the specific state machine):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "states:StartExecution"
+      ],
+      "Resource": "arn:aws:states:us-east-1:<HUB_ACCOUNT>:stateMachine:<NAME_PREFIX>-orchestrator"
+    }
+  ]
+}
+```
 
 ### Prerequisites
 
@@ -497,3 +685,22 @@ For comprehensive technical details, please refer to the documentation in the [d
 
 - `PatchExecRole` is limited to SSM/EC2 read + required operations.
 - Step Functions assumes `PatchExecRole` in each target account.
+
+## CI/CD
+
+Two workflows are provided to invoke patch runs via GitHub Actions (OIDC):
+
+- Single scenario: `.github/workflows/patch-canary.yml`
+  - Choose a scenario from `examples/run-inputs/` via the workflow input and start a single execution.
+
+- Matrix (multi-scenario): `.github/workflows/patch-matrix.yml`
+  - Provide a comma-separated list of scenario names (defaults provided) to launch multiple executions in parallel.
+  - You can also customize the directory of payloads with the `inputs_prefix` input (defaults to `examples/run-inputs/`).
+
+Both workflows require:
+
+- `state_machine_arn`: Orchestrator state machine ARN
+- `aws_region`: Region where the state machine resides
+- `role_to_assume`: Role with `states:StartExecution` permissions (OIDC trust to GitHub)
+
+Note: Ensure the assumed role has permission to read the workflow repo (for payload files) and to invoke the state machine.

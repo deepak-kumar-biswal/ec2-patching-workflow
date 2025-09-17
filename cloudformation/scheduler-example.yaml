@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Example EventBridge Scheduler to trigger the EC2 patch orchestrator Step Function.
+  Parameters allow customizing accounts/regions/tags/platforms and SSM options.
+
+Parameters:
+  SchedulerName:
+    Type: String
+    Default: ec2patch-monthly
+    Description: Name of the scheduler resource
+  CronExpression:
+    Type: String
+    Default: 'cron(0 5 ? * SUN#1 *)' # First Sunday 05:00 UTC
+    Description: Cron schedule expression
+  StateMachineArn:
+    Type: String
+    Description: ARN of the orchestrator state machine (e.g., arn:aws:states:us-east-1:111111111111:stateMachine:ec2patch-orchestrator)
+  InvokeRoleArn:
+    Type: String
+    Description: IAM Role ARN that EventBridge Scheduler uses to call states:StartExecution
+
+  WaveName:
+    Type: String
+    Default: wave1
+  Accounts:
+    Type: CommaDelimitedList
+    Default: 111111111111
+    Description: Comma-separated AWS account IDs to target
+  Regions:
+    Type: CommaDelimitedList
+    Default: us-east-1
+    Description: Comma-separated AWS regions to target
+  PatchGroups:
+    Type: CommaDelimitedList
+    Default: default
+    Description: Comma-separated PatchGroup tag values
+  Platforms:
+    Type: CommaDelimitedList
+    Default: Linux,Windows
+    Description: Comma-separated platforms (Linux/Windows)
+
+  MaxConcurrency:
+    Type: String
+    Default: '10%'
+  MaxErrors:
+    Type: String
+    Default: '1'
+  Operation:
+    Type: String
+    AllowedValues: [Install, Scan]
+    Default: Install
+  RebootOption:
+    Type: String
+    AllowedValues: [RebootIfNeeded, NoReboot]
+    Default: RebootIfNeeded
+
+Resources:
+  PatchSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Ref SchedulerName
+      ScheduleExpression: !Ref CronExpression
+      FlexibleTimeWindow:
+        Mode: OFF
+      Target:
+        Arn: !Ref StateMachineArn
+        RoleArn: !Ref InvokeRoleArn
+        Input: 
+          Fn::Sub:
+            - |
+              {
+                "waves": [
+                  {
+                    "name": "${WaveName}",
+                    "accounts": ["${AccountsCsv}"],
+                    "regions": ["${RegionsCsv}"],
+                    "filters": {
+                      "tags": { "PatchGroup": ["${PatchGroupsCsv}"] },
+                      "platforms": ["${PlatformsCsv}"]
+                    },
+                    "ssm": {
+                      "maxConcurrency": "${MaxConcurrency}",
+                      "maxErrors": "${MaxErrors}",
+                      "operation": "${Operation}",
+                      "rebootOption": "${RebootOption}"
+                    }
+                  }
+                ]
+              }
+            - AccountsCsv: { Fn::Join: [ '","', { Ref: Accounts } ] }
+              RegionsCsv: { Fn::Join: [ '","', { Ref: Regions } ] }
+              PatchGroupsCsv: { Fn::Join: [ '","', { Ref: PatchGroups } ] }
+              PlatformsCsv: { Fn::Join: [ '","', { Ref: Platforms } ] }
+
+Outputs:
+  SchedulerName:
+    Value: !Ref PatchSchedule
+    Description: Name of the created EventBridge Scheduler

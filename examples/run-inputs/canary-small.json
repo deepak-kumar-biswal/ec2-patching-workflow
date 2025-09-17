@@ -1,0 +1,19 @@
+{
+  "waves": [
+    {
+      "name": "canary",
+      "accounts": ["111111111111"],
+      "regions": ["us-east-1"],
+      "filters": {
+        "tags": { "PatchGroup": ["default"] },
+        "platforms": ["Linux", "Windows"]
+      },
+      "ssm": {
+        "maxConcurrency": "10%",
+        "maxErrors": "1",
+        "operation": "Install",
+        "rebootOption": "RebootIfNeeded"
+      }
+    }
+  ]
+}

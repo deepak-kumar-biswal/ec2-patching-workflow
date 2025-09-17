@@ -1,0 +1,19 @@
+{
+  "waves": [
+    {
+      "name": "linux-prod-webapp",
+      "accounts": ["111111111111"],
+      "regions": ["us-east-1"],
+      "filters": {
+        "tags": { "Environment": ["production"], "Tier": ["web", "app"] },
+        "platforms": ["Linux"]
+      },
+      "ssm": {
+        "maxConcurrency": "10%",
+        "maxErrors": "1%",
+        "operation": "Install",
+        "rebootOption": "NoReboot"
+      }
+    }
+  ]
+}
