@@ -120,7 +120,7 @@ def validate_input(event: Dict[str, Any]) -> Dict[str, Any]:
         return {
             'accounts': accounts,
             'regions': regions,
-            'today': datetime.datetime.utcnow().strftime('%Y/%m/%d'),
+            'today': datetime.datetime.now(datetime.UTC).strftime('%Y/%m/%d'),
             'correlation_id': str(uuid.uuid4())[:8]
         }
         
@@ -211,7 +211,7 @@ def get_instance_information(ssm_client, account: str, region: str) -> List[Dict
             
             # Enrich instances with additional metadata
             for instance in instance_list:
-                instance['discovered_at'] = datetime.datetime.utcnow().isoformat()
+                instance['discovered_at'] = datetime.datetime.now(datetime.UTC).isoformat()
                 instance['account_id'] = account
                 instance['region'] = region
                 
@@ -259,7 +259,7 @@ def store_inventory_data(inventory: Dict, s3_key: str, account: str, region: str
                 'region': region,
                 'date': date,
                 'instance_count': instance_count,
-                'generated_at': datetime.datetime.utcnow().isoformat(),
+                'generated_at': datetime.datetime.now(datetime.UTC).isoformat(),
                 'version': '2.0',
                 'correlation_id': correlation_id,
                 'lambda_function': 'PreEC2Inventory',
@@ -300,7 +300,7 @@ def store_inventory_data(inventory: Dict, s3_key: str, account: str, region: str
                 'region': region,
                 'instance-count': str(instance_count),
                 'correlation-id': correlation_id,
-                'generated-at': datetime.datetime.utcnow().isoformat()
+                'generated-at': datetime.datetime.now(datetime.UTC).isoformat()
             }
         )
         
@@ -326,9 +326,8 @@ def update_dynamodb_state(table_name: str, account: str, region: str, status: st
     """Update DynamoDB with execution state and comprehensive tracking"""
     try:
         table = dynamodb.Table(table_name)
-        
-        current_time = datetime.datetime.utcnow()
-        
+        current_time = datetime.datetime.now(datetime.UTC)
+
         item = {
             'PK': f"{account}#{region}",
             'SK': f"pre_inventory#{current_time.strftime('%Y-%m-%d')}",
@@ -398,7 +397,7 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                 'processed': 0,
                 'failed': 0,
                 'total_instances': 0,
-                'execution_start': datetime.datetime.utcnow().isoformat(),
+                'execution_start': datetime.datetime.now(datetime.UTC).isoformat(),
                 'correlation_id': correlation_id
             },
             'metadata': {
@@ -453,7 +452,7 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                         's3_url': s3_url,
                         'status': 'completed',
                         'processing_time_seconds': round(processing_time, 2),
-                        'timestamp': datetime.datetime.utcnow().isoformat()
+                        'timestamp': datetime.datetime.now(datetime.UTC).isoformat()
                     }
                     
                     results['success'].append(success_record)
@@ -469,7 +468,7 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                         'region': region,
                         'error': str(e),
                         'error_type': 'PatchingError',
-                        'timestamp': datetime.datetime.utcnow().isoformat(),
+                        'timestamp': datetime.datetime.now(datetime.UTC).isoformat(),
                         'processing_time_seconds': round(processing_time, 2),
                         'correlation_id': correlation_id
                     }
@@ -484,7 +483,7 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                         'region': region,
                         'error': f"Unexpected error: {str(e)}",
                         'error_type': 'UnexpectedError',
-                        'timestamp': datetime.datetime.utcnow().isoformat(),
+                        'timestamp': datetime.datetime.now(datetime.UTC).isoformat(),
                         'processing_time_seconds': round(processing_time, 2),
                         'correlation_id': correlation_id
                     }
@@ -495,8 +494,8 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
         # Calculate final execution metrics
         execution_time = time.time() - start_time
         results['execution_time_seconds'] = round(execution_time, 2)
-        results['timestamp'] = datetime.datetime.utcnow().isoformat()
-        results['summary']['execution_end'] = datetime.datetime.utcnow().isoformat()
+        results['timestamp'] = datetime.datetime.now(datetime.UTC).isoformat()
+        results['summary']['execution_end'] = datetime.datetime.now(datetime.UTC).isoformat()
         
         # Determine overall status and create response
         if results['summary']['failed'] == 0:
@@ -533,7 +532,7 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                 'failures': [{
                     'error': error_msg,
                     'error_type': 'HandlerError',
-                    'timestamp': datetime.datetime.utcnow().isoformat(),
+                    'timestamp': datetime.datetime.now(datetime.UTC).isoformat(),
                     'execution_time_seconds': round(execution_time, 2),
                     'aws_request_id': context.aws_request_id if context else 'unknown'
                 }],

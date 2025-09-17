@@ -1,0 +1,6 @@
+{
+  "NamePrefix": "ec2-patch",
+  "Environment": "dev",
+  "HubAccountId": "CHANGE-ME-HUB-ACCOUNT-ID",
+  "ExternalId": "CHANGE-ME-EXTERNAL-ID"
+}

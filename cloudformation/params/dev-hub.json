@@ -1,0 +1,13 @@
+{
+  "NamePrefix": "ec2-patch",
+  "Environment": "dev",
+  "LogRetentionDays": 30,
+  "SsmMaxConcurrency": "10%",
+  "SsmMaxErrors": "1",
+  "ApprovalTimeoutSeconds": 3600,
+  "ApprovalEmail": "",
+  "ApprovalSigningSecretString": "",
+  "CrossAccountExternalId": "CHANGE-ME-EXTERNAL-ID",
+  "LambdaArtifactBucket": "CHANGE-ME-ARTIFACT-BUCKET",
+  "LambdaArtifactKey": "ec2-patch/CHANGE-ME/lambda.zip"
+}

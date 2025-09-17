@@ -10,7 +10,6 @@ This document provides comprehensive API reference for the Enterprise EC2 Multi-
 - [Lambda Functions](#lambda-functions)
 - [EventBridge Integration](#eventbridge-integration)
 - [Systems Manager Integration](#systems-manager-integration)
-- [Bedrock AI Integration](#bedrock-ai-integration)
 - [SNS Notifications](#sns-notifications)
 - [Error Handling](#error-handling)
 
@@ -54,6 +53,7 @@ aws stepfunctions start-execution \
 | `notificationEmail` | string | No | Override default notification email |
 
 **Response**:
+
 ```json
 {
   "executionArn": "arn:aws:states:region:account:execution:ec2patch-orchestrator:execution-name",
@@ -69,6 +69,7 @@ aws stepfunctions describe-execution \
 ```
 
 **Response**:
+
 ```json
 {
   "executionArn": "string",
@@ -100,6 +101,7 @@ aws stepfunctions stop-execution \
 **Purpose**: Discover EC2 instances eligible for patching
 
 **Input**:
+
 ```json
 {
   "accounts": ["111111111111"],
@@ -113,6 +115,7 @@ aws stepfunctions stop-execution \
 ```
 
 **Output**:
+
 ```json
 {
   "instances": [
@@ -145,6 +148,7 @@ aws stepfunctions stop-execution \
 **Purpose**: Initiate manual approval workflow
 
 **Input**:
+
 ```json
 {
   "executionName": "patch-execution-12345",
@@ -161,6 +165,7 @@ aws stepfunctions stop-execution \
 ```
 
 **Output**:
+
 ```json
 {
   "approvalToken": "approval-token-12345",
@@ -169,6 +174,7 @@ aws stepfunctions stop-execution \
   "expiresAt": "2025-08-27T11:00:00.000Z"
 }
 ```
+
 
 ### ApprovalCallback
 
@@ -192,6 +198,7 @@ aws stepfunctions stop-execution \
   "processedAt": "2025-08-27T10:30:00.000Z"
 }
 ```
+
 
 ### PollSsmCommand
 
@@ -228,6 +235,7 @@ aws stepfunctions stop-execution \
   }
 }
 ```
+
 
 ### PostEC2Verify
 
@@ -275,62 +283,14 @@ aws stepfunctions stop-execution \
 }
 ```
 
-### AnalyzeWithBedrock
 
-**Purpose**: AI-powered patch impact analysis
-
-**Input**:
-```json
-{
-  "instances": [
-    {
-      "instanceId": "i-1234567890abcdef0",
-      "imageId": "ami-0123456789abcdef0",
-      "instanceType": "t3.medium",
-      "tags": {
-        "Environment": "production",
-        "Application": "web-server"
-      }
-    }
-  ],
-  "patchDetails": {
-    "securityPatches": 3,
-    "criticalPatches": 1,
-    "otherUpdates": 5
-  }
-}
-```
-
-**Output**:
-```json
-{
-  "analysis": {
-    "riskLevel": "MEDIUM",
-    "confidence": 0.85,
-    "recommendations": [
-      "Schedule patching during maintenance window",
-      "Verify web application functionality post-patch",
-      "Monitor CPU and memory usage for 1 hour post-patch"
-    ],
-    "potentialImpacts": [
-      {
-        "component": "apache2",
-        "impact": "Service restart required",
-        "severity": "LOW"
-      }
-    ],
-    "estimatedDowntime": "5-10 minutes",
-    "rollbackProcedure": "Create AMI snapshot before patching"
-  },
-  "bedrockRequestId": "bedrock-request-12345"
-}
-```
 
 ## EventBridge Integration
 
 ### Wave Execution Events
 
 **Event Pattern**:
+
 ```json
 {
   "source": ["aws.ec2patching"],
@@ -343,6 +303,7 @@ aws stepfunctions stop-execution \
   }
 }
 ```
+
 
 ### Custom Rule Creation
 
@@ -386,30 +347,6 @@ aws ssm send-command \
   --max-errors 2
 ```
 
-## Bedrock AI Integration
-
-### Agent Configuration
-
-```json
-{
-  "agentId": "AGENT12345",
-  "agentAliasId": "ALIAS12345",
-  "sessionId": "session-12345",
-  "inputText": "Analyze patch impact for production web servers running Amazon Linux 2"
-}
-```
-
-### Knowledge Base Query
-
-```bash
-aws bedrock-agent-runtime retrieve-and-generate \
-  --agent-id "AGENT12345" \
-  --agent-alias-id "ALIAS12345" \
-  --session-id "session-12345" \
-  --input '{
-    "text": "What are the risks of patching Apache on production servers?"
-  }'
-```
 
 ## SNS Notifications
 
@@ -431,6 +368,7 @@ aws bedrock-agent-runtime retrieve-and-generate \
   }
 }
 ```
+
 
 ### Subscription Management
 
@@ -459,7 +397,7 @@ aws sns set-subscription-attributes \
 | `SSMNotResponding` | SSM agent not responding | Verify SSM agent status and connectivity |
 | `PatchBaselineNotFound` | Patch baseline not configured | Create or assign patch baseline |
 | `ApprovalTimeout` | Manual approval timed out | Increase timeout or resend approval |
-| `BedrockThrottling` | Bedrock API rate limits exceeded | Implement exponential backoff |
+| `ApprovalTimeout` | Manual approval timed out | Increase timeout or resend approval |
 
 ### Error Response Format
 
@@ -508,7 +446,6 @@ def execute_with_retry(func, max_retries=3, backoff_factor=2):
 | Step Functions executions | 2000 concurrent | Use execution queuing |
 | Lambda concurrent executions | 1000 (default) | Request limit increase |
 | SSM concurrent commands | 100 per account | Implement batching |
-| Bedrock requests | 100 TPS | Implement rate limiting |
 | SNS message rate | 30,000 per second | Use SQS for high volume |
 
 ### Best Practices

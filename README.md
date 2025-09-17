@@ -6,37 +6,38 @@
 
 <div align="center">
   <h1>🔧 Enterprise EC2 Multi-Account Patching Platform</h1>
-  <p><strong>Production-grade EC2 patching orchestration for 1000+ AWS accounts</strong></p>
+  <p><strong>Production-grade EC2 patching orchestration for 100s of AWS accounts (2k+ instances)</strong></p>
 </div>
 
 <div align="center">
-
-[![Terraform](https://img.shields.io/badge/Terraform-1.5%2B-623CE4?style=for-the-badge&logo=terraform&logoColor=white)](https://www.terraform.io/)
+[![CloudFormation](https://img.shields.io/badge/CloudFormation-IaC-23A?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/cloudformation/)
 [![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 </div>
 
 ## 🏆 Enterprise-Grade EC2 Patching Orchestration
 
-This platform deploys a **production-grade** EC2 patching orchestrator using hub-and-spoke architecture for **1000+ AWS accounts** with automated patching workflows, manual approval gates, intelligent Bedrock analysis, and comprehensive monitoring.
+This platform deploys a **production-grade** EC2 patching orchestrator using a hub-and-spoke architecture for 100s of AWS accounts (scales to thousands of instances) with automated patching workflows, manual approval gates, and comprehensive monitoring. It is implemented with pure AWS CloudFormation (no Terraform/SAM; no Bedrock/X-Ray).
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [🏗️ Architecture Overview](#️-architecture-overview)
-- [🚀 Quick Start](#-quick-start)
-- [⚙️ Configuration](#️-configuration)
-- [🛡️ Security Services](#️-security-services)
+- [Architecture Overview](#architecture-overview)
+- [Pre-Prod Checklist](#pre-prod-checklist)
+- [Runbook: Deploy and Operate](#runbook-deploy-and-operate)
+- [Configuration](#configuration)
+- [Security](#security)
 - [API Reference](#api-reference)
-- [📈 Monitoring](#-monitoring)
-- [🔧 Troubleshooting](#-troubleshooting)
-- [🤝 Contributing](#-contributing)
-- [📞 Support](#-support)
+- [Monitoring](#monitoring)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [Support](#support)
+- [Ops Runbook](docs/runbook-operations.md)
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                        HUB ACCOUNT                              │
 │                  (Orchestration Control Plane)                 │
@@ -46,13 +47,9 @@ This platform deploys a **production-grade** EC2 patching orchestrator using hub
 │  │                 │  │                   │  │               │ │
 │  └─────────────────┘  └───────────────────┘  └───────────────┘ │
 │           │                      │                      │       │
-│           │             ┌────────▼────────┐            │       │
-│           │             │   Bedrock AI    │            │       │
-│           │             │   Analysis      │            │       │
-│           │             └─────────────────┘            │       │
 │           │                                            │       │
 │  ┌────────▼────────┐  ┌─────────────────┐  ┌──────────▼──────┐ │
-│  │   CloudWatch    │  │     SNS/SQS     │  │   DynamoDB      │ │
+│  │   CloudWatch    │  │      SNS        │  │   DynamoDB      │ │
 │  │   Dashboard     │  │   Notifications │  │   State Store   │ │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
 └─────────────────────────────────┬───────────────────────────────┘
@@ -80,125 +77,113 @@ This platform deploys a **production-grade** EC2 patching orchestrator using hub
 - **🎯 Hub Account**: Centralized orchestration with Step Functions workflow
 - **🔄 Spoke Accounts**: Target accounts with cross-account execution roles
 - **📅 Wave Management**: Account grouping with scheduled maintenance windows
-- **🤖 AI Analysis**: Bedrock-powered patch impact assessment
+- **📦 Pure CFN**: No Terraform, SAM, Bedrock or X-Ray required
 - **✅ Approval Gates**: Manual approval workflow with SNS notifications
 - **📊 Monitoring**: Real-time dashboards and alerting
 
-## 🚀 Quick Start
+## Pre-Prod Checklist
+
+Use this quick checklist before your first production run:
+
+- Accounts & Roles
+  - [ ] Spoke cross-account role deployed with correct ExternalId and trust to the hub
+  - [ ] CI/CD deploy role permissions verified; OIDC configured
+- Artifacts & Parameters
+  - [ ] Lambda artifact uploaded to S3; parameters reference correct bucket/key
+  - [ ] CloudFormation parameter JSONs set per env (concurrency, SSM MaxConcurrency/MaxErrors, log retention)
+- Limits & Concurrency
+  - [ ] Step Functions Map concurrency set for waves/accounts/regions
+  - [ ] Lambda reserved concurrency for hot paths (send/poll/approval)
+  - [ ] SSM Run Command limits align with account/region quotas
+- Security & Compliance
+  - [ ] KMS keys and policies validated for S3/DynamoDB/SNS
+  - [ ] TLS-only S3 bucket policy enabled; DDB PITR and TTL configured
+- Observability
+  - [ ] CloudWatch dashboards deployed; alarms hooked to your notification channel
+  - [ ] Log retention configured per your policy
+- Dry Run
+  - [ ] Execute a small canary wave (single account/region) and confirm approval and SSM outputs
+
+See also: Operations Runbook in `docs/runbook-operations.md`.
+
+## Runbook: Deploy and Operate
+
+For day-2 operations and incident handling, see the Ops Runbook: `docs/runbook-operations.md`.
 
 ### Prerequisites
 
-- Terraform >= 1.5
-- AWS CLI configured
+- AWS CLI v2 configured
 - OIDC-enabled GitHub roles (for CI/CD)
 - SSM Agent on target EC2 instances
 - Instances tagged with `PatchGroup=default`
 
-### 1. Deploy Hub Account
+### 1) Package Lambdas and Upload
+
+Use GitHub Actions (recommended) to zip handlers in `lambda/`, upload to S3, and deploy CFN with parameter JSONs.
+
+Manual alternative:
 
 ```bash
-cd terraform/hub
-terraform init
-
-terraform apply \
-  -var='region=us-east-1' \
-  -var='orchestrator_account_id=111111111111' \
-  -var='name_prefix=ec2patch' \
-  -var='bedrock_agent_id=YOUR_AGENT_ID' \
-  -var='bedrock_agent_alias_id=YOUR_ALIAS_ID' \
-  -var='wave_rules=[
-    {
-      name="wave1-critical",
-      schedule_expression="cron(0 3 ? * SAT *)",
-      accounts=["222222222222","333333333333"],
-      regions=["us-east-1"]
-    },
-    {
-      name="wave2-standard", 
-      schedule_expression="cron(30 3 ? * SAT *)",
-      accounts=["444444444444","555555555555"],
-      regions=["us-east-1"]
-    }
-  ]'
+python -m pip install -r requirements-dev.txt
+powershell -Command "Compress-Archive -Path ec2-patching-workflow/lambda/* -DestinationPath lambda.zip"
+aws s3 cp lambda.zip s3://<artifact-bucket>/<key-prefix>/lambda.zip
 ```
 
-### 2. Deploy Spoke Accounts
+### 2) Deploy Hub Stack (CloudFormation)
 
 ```bash
-cd terraform/spoke
-terraform init
-
-# Repeat for each target account
-terraform apply \
-  -var='region=us-east-1' \
-  -var='orchestrator_account_id=111111111111'
+aws cloudformation deploy \
+  --stack-name ec2patch-hub \
+  --template-file cloudformation/hub-cfn.yaml \
+  --parameter-overrides file://params/hub.dev.json \
+  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
 ```
 
-### 3. Verify Deployment
+### 3) Deploy Spoke Stacks
 
 ```bash
-# Check Step Functions
+aws cloudformation deploy \
+  --stack-name ec2patch-spoke \
+  --template-file cloudformation/spoke-cfn.yaml \
+  --parameter-overrides file://params/spoke.<account>.json \
+  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
+```
+
+### 4) Verify Deployment
+
+```bash
 aws stepfunctions list-state-machines --query 'stateMachines[?contains(name,`ec2patch`)]'
-
-# Check EventBridge rules
 aws events list-rules --name-prefix ec2patch
-
-# Test cross-account access
-aws sts assume-role \
-  --role-arn arn:aws:iam::SPOKE_ACCOUNT:role/PatchExecRole \
-  --role-session-name test-session
+aws sts assume-role --role-arn arn:aws:iam::SPOKE_ACCOUNT:role/PatchExecRole --role-session-name test-session
 ```
 
-## ⚙️ Configuration
+## Configuration
 
-### Hub Account Variables
+### Hub Stack Parameters (CloudFormation)
 
-| Variable | Type | Description | Example |
+| Parameter | Type | Description | Example |
 |----------|------|-------------|---------|
-| `region` | string | AWS region for deployment | `us-east-1` |
-| `orchestrator_account_id` | string | Hub account ID | `111111111111` |
 | `name_prefix` | string | Resource naming prefix | `ec2patch` |
-| `bedrock_agent_id` | string | Bedrock agent identifier | `AGENT123` |
-| `bedrock_agent_alias_id` | string | Bedrock agent alias | `ALIAS123` |
-| `sns_email_subscriptions` | list(string) | Email addresses for notifications | `["ops@company.com"]` |
-| `wave_pause_seconds` | number | Delay between waves | `300` |
-| `abort_on_issues` | bool | Stop on detected issues | `true` |
+| `artifact_bucket` | string | S3 bucket for lambda.zip | `my-artifacts` |
+| `artifact_key` | string | S3 key for lambda.zip | `ec2patch/<sha>/lambda.zip` |
+| `cross_account_external_id` | string | ExternalId for spoke trust | `ext-1234` |
+| `poll_interval_seconds` | number | Poll loop interval seconds | `15` |
+| `max_wave_concurrency` | number | Parallel accounts per wave | `5` |
+| `ssm_max_concurrency` | string | SSM MaxConcurrency | `10%` |
+| `ssm_max_errors` | string | SSM MaxErrors | `1%` |
+| `notification_email` | string | Optional SNS email subscription | `ops@company.com` |
 
 ### Wave Configuration
 
-```hcl
-variable "wave_rules" {
-  description = "Patching wave configuration"
-  type = list(object({
-    name                = string
-    schedule_expression = string  # EventBridge cron
-    accounts           = list(string)
-    regions            = list(string)
-  }))
-  
-  default = [
-    {
-      name                = "critical-systems"
-      schedule_expression = "cron(0 2 ? * SUN *)"  # Sunday 2 AM
-      accounts           = ["111111111111", "222222222222"]
-      regions            = ["us-east-1", "us-west-2"]
-    },
-    {
-      name                = "development"
-      schedule_expression = "cron(0 3 ? * SUN *)"  # Sunday 3 AM
-      accounts           = ["333333333333", "444444444444"]
-      regions            = ["us-east-1"]
-    }
-  ]
-}
-```
+- Define `accountWaves` in your Step Functions input or schedule rules.
+- Use `wavePauseSeconds` for gaps between waves and `abortOnIssues` to stop on issues.
 
-### Spoke Account Variables
+### Spoke Stack Parameters (CloudFormation)
 
-| Variable | Type | Description | Default |
+| Parameter | Type | Description | Example |
 |----------|------|-------------|---------|
-| `region` | string | Region for spoke resources | `us-east-1` |
-| `orchestrator_account_id` | string | Hub account ID | - |
+| `hub_account_id` | string | Hub/orchestrator account ID | `111111111111` |
+| `external_id` | string | ExternalId trusted by hub | `ext-1234` |
 | `role_name` | string | Cross-account role name | `PatchExecRole` |
 
 ### Instance Tagging Requirements
@@ -211,18 +196,19 @@ MaintenanceWindow=standard   # Maintenance window type
 CriticalityLevel=high       # Business criticality
 ```
 
-## 🛡️ Security Services
+## Security
 
 ### Supported AWS Services
+
 - ✅ **Systems Manager** - Patch orchestration and compliance
 - ✅ **EventBridge** - Scheduled maintenance windows
 - ✅ **Step Functions** - Workflow orchestration
 - ✅ **Lambda** - Custom processing logic
-- ✅ **Bedrock AI** - Intelligent patch analysis
-- ✅ **SNS/SQS** - Notification and queueing
+- ✅ **SNS** - Notification and queueing
 - ✅ **CloudWatch** - Monitoring and alerting
 - ✅ **DynamoDB** - State management
 - ✅ **S3** - Artifact storage
+- ✅ **KMS** - Encryption for S3/DDB/SNS
 - ✅ **IAM** - Cross-account security
 
 ### Cross-Account Security Model
@@ -251,7 +237,8 @@ CriticalityLevel=high       # Business criticality
 
 ### Step Functions API
 
-**Start Execution**
+#### Start Execution
+
 ```bash
 aws stepfunctions start-execution \
   --state-machine-arn arn:aws:states:region:account:stateMachine:ec2patch-orchestrator \
@@ -267,7 +254,8 @@ aws stepfunctions start-execution \
   }'
 ```
 
-**Get Execution Status**
+#### Get Execution Status
+
 ```bash
 aws stepfunctions describe-execution \
   --execution-arn arn:aws:states:region:account:execution:ec2patch-orchestrator:execution-name
@@ -282,9 +270,9 @@ aws stepfunctions describe-execution \
 | `ApprovalCallback` | Process approval responses | 1 min |
 | `PollSsmCommand` | Monitor patch execution | 10 min |
 | `PostEC2Verify` | Validate patch success | 5 min |
-| `AnalyzeWithBedrock` | AI-powered analysis | 3 min |
+| `SendSsmCommand` | Initiate SSM RunCommand | 2 min |
 
-## 📈 Monitoring
+## Monitoring
 
 ### CloudWatch Dashboard
 
@@ -295,6 +283,8 @@ Key metrics monitored:
 - **Execution Duration**: Time taken per patching wave
 - **Error Rates**: Failed patches and root causes
 - **Compliance Drift**: Instances falling behind patch levels
+
+A CloudWatch dashboard named `${name_prefix}-dashboard` is created with Step Functions and Lambda error metrics.
 
 ### Alerting Configuration
 
@@ -331,11 +321,12 @@ aws stepfunctions get-execution-history \
   --max-items 100
 ```
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
 #### 1. Cross-Account Role Assumption Failed
+
 ```bash
 # Verify role exists and trust policy
 aws iam get-role --role-name PatchExecRole
@@ -349,6 +340,7 @@ aws sts assume-role \
 **Solution**: Ensure External ID matches and trust policy is correct.
 
 #### 2. SSM Command Failed
+
 ```bash
 # Check SSM agent status
 aws ssm describe-instance-information \
@@ -362,19 +354,17 @@ aws ssm get-command-invocation \
 
 **Solution**: Verify SSM agent is running and instance has proper IAM role.
 
-#### 3. Bedrock Analysis Timeout
-```bash
-# Check Bedrock agent status
-aws bedrock-agent get-agent \
-  --agent-id YOUR_AGENT_ID
+#### 3. Approval or Callback Timeout
 
-# View Lambda logs
-aws logs tail /aws/lambda/ec2patch-bedrock-analyzer --follow
+```bash
+# Check ApprovalCallback logs
+aws logs tail /aws/lambda/ec2patch-ApprovalCallback --follow
 ```
 
-**Solution**: Increase Lambda timeout or optimize Bedrock query.
+**Solution**: Increase Lambda timeout or ensure the approval callback URL and authorizer are configured correctly.
 
 #### 4. EventBridge Rule Not Triggering
+
 ```bash
 # List EventBridge rules
 aws events list-rules --name-prefix ec2patch
@@ -392,41 +382,39 @@ aws events list-targets-by-rule --rule ec2patch-wave1-critical
 - **Timeout Values**: Adjust based on patch complexity
 - **Region Strategy**: Minimize cross-region calls
 
-## 🤝 Contributing
+## Contributing
 
 ### Development Setup
 
 1. **Clone Repository**
+
 ```bash
 git clone https://github.com/deepak-kumar-biswal/aws-platform-audit.git
 cd aws-platform-audit/ec2/ec2-patching-workflow
 ```
 
-2. **Install Dependencies**
+1. **Install Dependencies**
+
 ```bash
 pip install -r requirements-dev.txt
-terraform --version  # Verify >= 1.5
 ```
 
-3. **Run Tests**
+1. **Run Tests**
+
 ```bash
 python -m pytest tests/
-terraform -chdir=terraform/hub validate
-terraform -chdir=terraform/spoke validate
 ```
 
-4. **Local Development**
+1. **Local Development**
+
 ```bash
 # Plan changes
-terraform -chdir=terraform/hub plan -var-file=../../examples/hub.auto.tfvars.example
-
-# Apply to development environment
-terraform -chdir=terraform/hub apply -var="name_prefix=dev-ec2patch"
+# Update code and run unit tests as needed
 ```
 
 ### Code Standards
 
-- Follow Terraform best practices and naming conventions
+- Follow CloudFormation best practices and naming conventions
 - Use consistent Python coding standards (PEP 8)
 - Include comprehensive error handling and logging
 - Write unit tests for all Lambda functions
@@ -440,19 +428,22 @@ terraform -chdir=terraform/hub apply -var="name_prefix=dev-ec2patch"
 - Ensure CI/CD pipeline passes
 - Request review from code owners
 
-## 📞 Support
+## Support
 
 ### Documentation
+
 - [Deployment Guide](docs/deployment-guide.md)
 - [API Reference](docs/api.md)
 - [Troubleshooting Guide](docs/troubleshooting-guide.md)
 
 ### Getting Help
+
 - **Issues**: Create GitHub issue with detailed reproduction steps
 - **Questions**: Check existing documentation and issues first
 - **Security**: Report vulnerabilities through private channels
 
 ### Maintenance Schedule
+
 - **Patch Testing**: First Sunday of each month
 - **Documentation Updates**: Quarterly
 - **Dependency Updates**: Monthly automated PRs
@@ -460,36 +451,17 @@ terraform -chdir=terraform/hub apply -var="name_prefix=dev-ec2patch"
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-**Built with ❤️ for Enterprise-Scale EC2 Patch Management**
+### Built with ❤️ for Enterprise-Scale EC2 Patch Management
 
 For comprehensive technical details, please refer to the documentation in the [docs/](docs/) directory.
-- An **SNS email** includes two links (`Approve`/`Reject`) pointing to the API Gateway `/callback` route.
-- Approval triggers the **Step Functions** state machine to proceed.
 
-## Start a Run Manually
-You can start execution with a JSON `input` similar to what EventBridge sends:
-```json
-{
-  "accountWaves": [
-    { "accounts": ["222222222222","333333333333"], "regions": ["us-east-1"] }
-  ],
-  "ec2": { "tagKey": "PatchGroup", "tagValue": "default" },
-  "snsTopicArn": "arn:aws:sns:us-east-1:111111111111:ec2patch-PatchAlerts",
-  "bedrock": { "agentId": "AGENT_ID", "agentAliasId": "ALIAS_ID" },
-  "wavePauseSeconds": 0,
-  "abortOnIssues": true
-}
-```
+### Security Notes
 
-## CloudWatch Dashboard
-A dashboard named `${name_prefix}-dashboard` is created with **Step Functions** and **Lambda** error metrics.
-
-## Security Notes
 - `PatchExecRole` is limited to SSM/EC2 read + required operations.
 - Step Functions assumes `PatchExecRole` in each target account.

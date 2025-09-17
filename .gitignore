@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env
+.venv/
+venv/
+ENV/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Tests & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.junit/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Cache
+.cache/
+.mypy_cache/
+.pytype/
+
+# Logs
+logs/
+*.log
+
+# Terraform leftovers (if any examples are used locally)
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate*
+crash.log
+
+# CloudFormation packaged artifacts
+packaged-template.yaml
+
+# Node (if any tooling is added later)
+node_modules/
+
+# Lambda zips and local bundles
+*.zip
+**/lambda/*.zip
+**/artifacts/
+
+# IDEs
+.idea/
+*.iml
+
+# Local param files / secrets (if any)
+**/params/*.local.json
+secrets.*.json
+
+# S3 sync temp
+.s3cmd

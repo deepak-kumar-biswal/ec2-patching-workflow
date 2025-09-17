@@ -102,11 +102,12 @@ def validate_input(event: Dict[str, Any]) -> Dict[str, Any]:
         'region': region,
         'command_id': command_id,
         'account_id': event.get('accountId', 'unknown'),
-        'execution_id': event.get('executionId', 'unknown')
+        'execution_id': event.get('executionId', 'unknown'),
+        'external_id': event.get('externalId', '')
     }
 
 @retry_with_backoff(max_retries=3)
-def assume_cross_account_role(role_arn: str, account_id: str) -> Dict[str, str]:
+def assume_cross_account_role(role_arn: str, account_id: str, external_id: str = "") -> Dict[str, str]:
     """Assume cross-account role with enhanced error handling"""
     try:
         sts_client = boto3.client('sts')
@@ -114,11 +115,14 @@ def assume_cross_account_role(role_arn: str, account_id: str) -> Dict[str, str]:
         
         logger.info(f"Assuming role: {role_arn}")
         
-        response = sts_client.assume_role(
-            RoleArn=role_arn,
-            RoleSessionName=session_name,
-            DurationSeconds=3600  # 1 hour
-        )
+        params = {
+            'RoleArn': role_arn,
+            'RoleSessionName': session_name,
+            'DurationSeconds': 3600
+        }
+        if external_id:
+            params['ExternalId'] = external_id
+        response = sts_client.assume_role(**params)
         
         credentials = response['Credentials']
         logger.info(f"Successfully assumed role for account {account_id}")
@@ -304,11 +308,12 @@ def handler(event: Dict[str, Any], context) -> Dict[str, Any]:
         command_id = validated_data['command_id']
         account_id = validated_data['account_id']
         execution_id = validated_data['execution_id']
+        external_id = validated_data['external_id']
         
         logger.info(f"Polling command {command_id} in account {account_id}, region {region}")
         
         # Assume cross-account role
-        credentials = assume_cross_account_role(role_arn, account_id)
+        credentials = assume_cross_account_role(role_arn, account_id, external_id)
         
         # Create SSM client
         ssm_client = create_ssm_client(credentials, region)

@@ -4,6 +4,8 @@
 
 This guide provides comprehensive troubleshooting information for the Enterprise EC2 Multi-Account Patching Platform, including common issues, diagnostic procedures, and resolution steps.
 
+For day-2 operations and procedures (approvals, retries, scaling, monitoring), see the Ops Runbook: `docs/runbook-operations.md`.
+
 ## Table of Contents
 
 - [Quick Diagnostics](#quick-diagnostics)
@@ -12,7 +14,7 @@ This guide provides comprehensive troubleshooting information for the Enterprise
 - [Lambda Function Errors](#lambda-function-errors)
 - [Systems Manager Issues](#systems-manager-issues)
 - [EventBridge Problems](#eventbridge-problems)
-- [Bedrock AI Issues](#bedrock-ai-issues)
+ 
 - [Performance Problems](#performance-problems)
 - [Monitoring and Alerting](#monitoring-and-alerting)
 
@@ -87,11 +89,13 @@ aws stepfunctions list-executions \
 ### Issue: Role Assumption Failed
 
 **Symptoms**:
-```
+
+```text
 AccessDenied: Unable to assume role arn:aws:iam::ACCOUNT:role/PatchExecRole
 ```
 
 **Diagnosis**:
+
 ```bash
 # Test role assumption
 aws sts assume-role \
@@ -102,12 +106,14 @@ aws sts assume-role \
 **Common Causes**:
 
 1. **Missing Trust Relationship**
+
 ```bash
 # Check trust policy
 aws iam get-role --role-name PatchExecRole --query 'Role.AssumeRolePolicyDocument'
 ```
 
 **Expected Trust Policy**:
+
 ```json
 {
   "Version": "2012-10-17",
@@ -128,13 +134,18 @@ aws iam get-role --role-name PatchExecRole --query 'Role.AssumeRolePolicyDocumen
 }
 ```
 
-2. **Incorrect External ID**
+1. **Incorrect External ID**
+
 ```bash
-# Verify External ID in hub account Terraform outputs
-terraform output external_id
+# Verify External ID configured for Hub
+aws cloudformation describe-stacks \
+  --stack-name ec2-patch-hub \
+  --query 'Stacks[0].Parameters[?ParameterKey==`CrossAccountExternalId`].ParameterValue' \
+  --output text
 ```
 
 **Resolution**:
+
 ```bash
 # Update trust policy
 aws iam update-assume-role-policy \
@@ -145,10 +156,12 @@ aws iam update-assume-role-policy \
 ### Issue: Cross-Account Network Connectivity
 
 **Symptoms**:
+
 - Lambda functions timing out when accessing spoke accounts
 - SSM commands failing to reach instances
 
 **Diagnosis**:
+
 ```bash
 # Check VPC endpoints
 aws ec2 describe-vpc-endpoints \
@@ -161,6 +174,7 @@ aws ssm describe-instance-information \
 ```
 
 **Resolution**:
+
 1. Ensure VPC endpoints are configured for SSM
 2. Verify security group rules allow HTTPS traffic
 3. Check NACLs for blocking rules
@@ -170,6 +184,7 @@ aws ssm describe-instance-information \
 ### Issue: Execution Stuck in RUNNING State
 
 **Symptoms**:
+
 ```bash
 # Execution running for extended period
 aws stepfunctions describe-execution \
@@ -178,6 +193,7 @@ aws stepfunctions describe-execution \
 ```
 
 **Diagnosis**:
+
 ```bash
 # Get execution history
 aws stepfunctions get-execution-history \
@@ -203,6 +219,7 @@ aws stepfunctions get-execution-history \
    - Check loop conditions and counters
 
 **Resolution**:
+
 ```bash
 # Stop stuck execution
 aws stepfunctions stop-execution \
@@ -220,7 +237,8 @@ aws stepfunctions start-execution \
 ### Issue: State Machine Execution Failed
 
 **Symptoms**:
-```
+
+```json
 {
   "status": "FAILED",
   "error": "States.TaskFailed",
@@ -231,20 +249,23 @@ aws stepfunctions start-execution \
 **Diagnosis Steps**:
 
 1. **Get Error Details**:
+
 ```bash
 aws stepfunctions describe-execution \
   --execution-arn "$EXECUTION_ARN" \
   --query '{Error:error,Cause:cause,Output:output}'
 ```
 
-2. **Review Execution History**:
+1. **Review Execution History**:
+
 ```bash
 aws stepfunctions get-execution-history \
   --execution-arn "$EXECUTION_ARN" \
   --query 'events[?type==`TaskFailed`]'
 ```
 
-3. **Check Lambda Logs**:
+1. **Check Lambda Logs**:
+
 ```bash
 aws logs filter-log-events \
   --log-group-name "/aws/lambda/ec2patch-preec2inventory" \
@@ -257,11 +278,13 @@ aws logs filter-log-events \
 ### Issue: PreEC2Inventory Function Failing
 
 **Symptoms**:
-```
+
+```text
 ERROR: Unable to describe instances in account 222222222222
 ```
 
 **Diagnosis**:
+
 ```bash
 # Check function logs
 aws logs tail /aws/lambda/ec2patch-preec2inventory --follow
@@ -288,6 +311,7 @@ aws lambda invoke \
    - Tag key/value mismatches
 
 **Resolution**:
+
 ```python
 # Enhanced error handling in Lambda
 import boto3
@@ -328,25 +352,27 @@ def lambda_handler(event, context):
         raise
 ```
 
-### Issue: Bedrock Analysis Function Timeout
+### Issue: Approval Callback Timeout
 
 **Symptoms**:
-```
+
+```text
 Task timed out after 180.00 seconds
 ```
 
 **Diagnosis**:
+
 ```bash
 # Check function configuration
 aws lambda get-function-configuration \
-  --function-name ec2patch-analyze-bedrock \
+  --function-name ec2patch-ApprovalCallback \
   --query '{Timeout:Timeout,MemorySize:MemorySize}'
 
 # Review CloudWatch metrics
 aws cloudwatch get-metric-statistics \
   --namespace AWS/Lambda \
   --metric-name Duration \
-  --dimensions Name=FunctionName,Value=ec2patch-analyze-bedrock \
+  --dimensions Name=FunctionName,Value=ec2patch-ApprovalCallback \
   --start-time $(date -d "1 hour ago" --iso-8601) \
   --end-time $(date --iso-8601) \
   --period 300 \
@@ -354,10 +380,11 @@ aws cloudwatch get-metric-statistics \
 ```
 
 **Resolution**:
+
 ```bash
 # Increase timeout and memory
 aws lambda update-function-configuration \
-  --function-name ec2patch-analyze-bedrock \
+  --function-name ec2patch-ApprovalCallback \
   --timeout 300 \
   --memory-size 512
 ```
@@ -367,10 +394,12 @@ aws lambda update-function-configuration \
 ### Issue: SSM Commands Failing
 
 **Symptoms**:
+
 - Commands stuck in "InProgress" status
 - High failure rates for patch installation
 
 **Diagnosis**:
+
 ```bash
 # Check command status
 aws ssm list-command-invocations \
@@ -386,13 +415,15 @@ aws ssm describe-instance-information \
 **Common Issues**:
 
 1. **SSM Agent Not Running**:
+
 ```bash
 # On instance, restart SSM agent
 sudo systemctl restart amazon-ssm-agent
 sudo systemctl status amazon-ssm-agent
 ```
 
-2. **Instance Role Missing Permissions**:
+1. **Instance Role Missing Permissions**:
+
 ```json
 {
   "Version": "2012-10-17",
@@ -414,7 +445,8 @@ sudo systemctl status amazon-ssm-agent
 }
 ```
 
-3. **Network Connectivity Issues**:
+1. **Network Connectivity Issues**:
+
 ```bash
 # Test connectivity from instance
 curl -I https://ssm.us-east-1.amazonaws.com
@@ -424,10 +456,12 @@ curl -I https://ec2messages.us-east-1.amazonaws.com
 ### Issue: Patch Baseline Configuration
 
 **Symptoms**:
+
 - No patches being installed despite availability
 - Wrong patches being installed
 
 **Diagnosis**:
+
 ```bash
 # Check patch baseline
 aws ssm describe-patch-baselines \
@@ -440,6 +474,7 @@ aws ssm get-patch-baseline \
 ```
 
 **Resolution**:
+
 ```bash
 # Create custom patch baseline
 aws ssm create-patch-baseline \
@@ -472,10 +507,12 @@ aws ssm create-patch-baseline \
 ### Issue: Scheduled Rules Not Triggering
 
 **Symptoms**:
+
 - Patching waves not starting as scheduled
 - No Step Functions executions at expected times
 
 **Diagnosis**:
+
 ```bash
 # Check rule status
 aws events describe-rule --name ec2patch-wave1-critical
@@ -489,12 +526,14 @@ aws logs filter-log-events \
 **Common Issues**:
 
 1. **Rule Disabled**:
+
 ```bash
 # Enable rule
 aws events enable-rule --name ec2patch-wave1-critical
 ```
 
-2. **Incorrect Cron Expression**:
+1. **Incorrect Cron Expression**:
+
 ```bash
 # Test cron expression
 # For "every Sunday at 2 AM UTC"
@@ -503,7 +542,8 @@ aws events put-rule \
   --schedule-expression "cron(0 2 ? * SUN *)"
 ```
 
-3. **IAM Permissions for Target**:
+1. **IAM Permissions for Target**:
+
 ```json
 {
   "Version": "2012-10-17",
@@ -521,83 +561,14 @@ aws events put-rule \
 }
 ```
 
-## Bedrock AI Issues
-
-### Issue: Bedrock API Rate Limiting
-
-**Symptoms**:
-```
-ThrottlingException: Rate exceeded for operation InvokeAgent
-```
-
-**Diagnosis**:
-```bash
-# Check CloudWatch metrics for Bedrock
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/Bedrock \
-  --metric-name Invocations \
-  --dimensions Name=AgentId,Value=YOUR_AGENT_ID \
-  --start-time $(date -d "1 hour ago" --iso-8601) \
-  --end-time $(date --iso-8601) \
-  --period 300 \
-  --statistics Sum
-```
-
-**Resolution**:
-```python
-import time
-import random
-from botocore.exceptions import ClientError
-
-def invoke_bedrock_with_backoff(bedrock_client, **kwargs):
-    max_retries = 5
-    base_delay = 1
-    
-    for attempt in range(max_retries):
-        try:
-            return bedrock_client.invoke_agent(**kwargs)
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'ThrottlingException':
-                if attempt == max_retries - 1:
-                    raise
-                
-                # Exponential backoff with jitter
-                delay = (base_delay * (2 ** attempt)) + random.uniform(0, 1)
-                time.sleep(delay)
-            else:
-                raise
-```
-
-### Issue: Bedrock Agent Not Responding
-
-**Symptoms**:
-- Long response times from Bedrock agent
-- Empty or malformed responses
-
-**Diagnosis**:
-```bash
-# Check agent status
-aws bedrock-agent get-agent --agent-id YOUR_AGENT_ID
-
-# Test agent directly
-aws bedrock-agent-runtime invoke-agent \
-  --agent-id YOUR_AGENT_ID \
-  --agent-alias-id YOUR_ALIAS_ID \
-  --session-id test-session \
-  --input-text "Test query for patch analysis"
-```
-
-**Common Issues**:
-
-1. **Agent Configuration**: Verify action groups and knowledge base setup
-2. **Permissions**: Check agent execution role permissions
-3. **Knowledge Base**: Ensure knowledge base is properly indexed
+<!-- Bedrock integration was removed; no AI-related troubleshooting is applicable in CFN-only scope. -->
 
 ## Performance Problems
 
 ### Issue: Slow Execution Times
 
 **Symptoms**:
+
 - Patch cycles taking longer than expected
 - Lambda functions approaching timeout limits
 
@@ -623,11 +594,11 @@ aws cloudwatch get-metric-statistics \
    - Batch instance operations
 
 2. **Caching**:
-   - Cache instance inventory
-   - Reuse cross-account credentials
-   - Cache Bedrock responses
 
-3. **Timeouts**:
+- Cache instance inventory
+- Reuse cross-account credentials
+
+1. **Timeouts**:
    - Optimize Lambda function timeouts
    - Adjust Step Functions timeouts
    - Set appropriate SSM command timeouts
@@ -777,12 +748,20 @@ echo "✅ Emergency stop complete"
 ### Rollback Procedures
 
 ```bash
-# Rollback to previous Terraform state
-cd terraform/hub
-terraform apply -target=aws_cloudwatch_event_rule.waves -var="wave_rules=[]"
+# Disable all EventBridge rules for safety
+aws events list-rules --name-prefix ec2patch \
+  --query 'Rules[].Name' \
+  --output text | while read rule_name; do
+    echo "Disabling rule: $rule_name"
+    aws events disable-rule --name "$rule_name"
+done
 
-# Re-enable after issue resolution
-terraform apply -var-file=production.tfvars
+# Optionally roll back CloudFormation stacks
+aws cloudformation deploy \
+  --template-file cloudformation/hub-cfn.yaml \
+  --stack-name ec2-patch-hub \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides file://cloudformation/params/dev-hub.json
 ```
 
 ## Support Escalation
@@ -797,16 +776,17 @@ When escalating issues, collect:
    - Error messages and codes
 
 2. **Environment Information**:
-   - AWS account IDs involved
-   - Regions and availability zones
-   - Terraform version and state
 
-3. **Timing Information**:
+- AWS account IDs involved
+- Regions and availability zones
+- CloudFormation change sets and stack events
+
+1. **Timing Information**:
    - When issue started
    - Last successful execution
    - Pattern of failures
 
-4. **Logs and Metrics**:
+1. **Logs and Metrics**:
    - CloudWatch logs exports
    - Step Functions execution history
    - Lambda function metrics

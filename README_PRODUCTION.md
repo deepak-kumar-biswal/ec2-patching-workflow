@@ -10,26 +10,29 @@ This is a **production-grade** EC2 patching solution designed for enterprise env
 - **Multi-Account/Multi-Region**: Hub-spoke architecture for centralized patching across AWS organizations
 - **Wave-Based Patching**: Configurable waves with scheduling, priorities, and dependencies  
 - **Manual Approval Workflow**: Integration with SNS, Slack, and Microsoft Teams for approval workflows
-- **AI-Powered Analysis**: Amazon Bedrock integration for intelligent issue analysis and recommendations
-- **Production Monitoring**: Comprehensive CloudWatch dashboards, alarms, and X-Ray tracing
+- **Production Monitoring**: Comprehensive CloudWatch dashboards and alarms
 - **Security & Compliance**: End-to-end encryption, audit logging, and compliance framework support
 
+ 
 ### Reliability & Scalability
+ 
 - **Fault Tolerance**: Comprehensive error handling with retry logic and circuit breakers
 - **Auto-Recovery**: Self-healing capabilities with automatic retries and escalation
 - **Load Balancing**: Intelligent concurrency control and rate limiting
 - **Performance Monitoring**: Real-time metrics and performance optimization
 - **Disaster Recovery**: Cross-region backup and recovery capabilities
 
+ 
 ### DevOps & Automation
-- **Infrastructure as Code**: Complete Terraform configuration with best practices
+ 
+- **Infrastructure as Code**: Complete IaC via CloudFormation templates
 - **CI/CD Pipeline**: GitHub Actions with automated testing, security scanning, and deployment
 - **Testing Framework**: Unit, integration, and end-to-end tests with coverage reporting
 - **Documentation**: Comprehensive documentation with architecture diagrams and runbooks
 
 ## 🏗️ Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Hub Account (Orchestrator)              │
 ├─────────────────────────────────────────────────────────────────┤
@@ -46,7 +49,7 @@ This is a **production-grade** EC2 patching solution designed for enterprise env
 │  └──────────────┘  └─────────────────┘  └──────────────────┘   │
 │          │                  │                       │           │
 │  ┌──────────────┐  ┌─────────────────┐  ┌──────────────────┐   │
-│  │      S3      │  │   DynamoDB      │  │   Bedrock AI     │   │
+│  │      S3      │  │   DynamoDB      │                     │   │
 │  │  (Snapshots) │  │   (State)       │  │   (Analysis)     │   │
 │  └──────────────┘  └─────────────────┘  └──────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
@@ -69,149 +72,36 @@ This is a **production-grade** EC2 patching solution designed for enterprise env
 
 1. **AWS Accounts**: Hub account + spoke accounts for patching
 2. **Permissions**: Admin access to deploy IAM roles and resources
-3. **Tools**: Terraform >= 1.5, AWS CLI, Git
-4. **Bedrock**: Amazon Bedrock agent configured for AI analysis
-5. **GitHub**: Repository with OIDC provider configured
+3. **Tools**: AWS CLI, Git
+4. **GitHub**: Repository with OIDC provider configured
 
-### 1. Hub Account Deployment
+### Deployment
 
-```bash
-# Clone repository
-git clone https://github.com/deepak-kumar-biswal/aws-platform-audit.git
-cd aws-platform-audit/ec2/ec2-patching-workflow/terraform/hub
-
-# Configure variables
-cp ../../examples/hub.auto.tfvars.example terraform.tfvars
-
-# Edit terraform.tfvars with your values
-vim terraform.tfvars
-
-# Deploy infrastructure
-terraform init
-terraform plan
-terraform apply
-```
-
-### 2. Spoke Account Deployment (Repeat for each target account)
-
-```bash
-cd ../spoke
-
-# Configure variables
-vim terraform.tfvars
-
-# Deploy cross-account role
-terraform init
-terraform plan  
-terraform apply
-```
-
-### 3. Configure GitHub Actions (Optional)
-
-```bash
-# Set up GitHub secrets and variables
-gh secret set PRODUCTION_ROLE_ARN --body "arn:aws:iam::111111111111:role/GitHubActionsRole"
-gh secret set BEDROCK_AGENT_ID --body "AGENT_ID_HERE"
-gh variable set PRODUCTION_ACCOUNT_ID --body "111111111111"
-```
+Use the CloudFormation templates in `cloudformation/` and the GitHub Actions workflows in `.github/workflows/` to deploy the hub and spoke stacks. Provide parameter JSONs in `cloudformation/params/` and set required GitHub secrets/vars as documented in the main README.
 
 ## 📋 Configuration
 
-### Hub Account Variables (`terraform.tfvars`)
+### Configuration
 
-```hcl
-# Basic Configuration
-region                  = "us-east-1"
-orchestrator_account_id = "111111111111"
-name_prefix            = "ec2patch"
-environment            = "production"
+See the main `README.md` for CloudFormation parameter details and example JSONs in `cloudformation/params/`.
 
-# Wave Configuration
-wave_rules = [
-  {
-    name                = "development-wave"
-    schedule_expression = "cron(0 2 ? * SUN *)"  # Sunday 2 AM
-    accounts           = ["222222222222"]
-    regions            = ["us-east-1"]
-    priority           = 1
-    timeout_minutes    = 120
-  },
-  {
-    name                = "staging-wave"  
-    schedule_expression = "cron(0 3 ? * SUN *)"  # Sunday 3 AM
-    accounts           = ["333333333333"]
-    regions            = ["us-east-1", "us-west-2"]
-    priority           = 2
-    timeout_minutes    = 180
-  },
-  {
-    name                = "production-wave"
-    schedule_expression = "cron(0 4 ? * SUN *)"  # Sunday 4 AM
-    accounts           = ["444444444444", "555555555555"]
-    regions            = ["us-east-1", "us-west-2", "eu-west-1"]
-    priority           = 3
-    timeout_minutes    = 240
-    parallel_execution = false
-  }
-]
+### Environments
 
-# Notifications
-sns_email_subscriptions = ["devops@company.com", "oncall@company.com"]
-slack_webhook_url      = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
-
-# Bedrock AI Configuration
-bedrock_agent_id       = "AGENT_ID_HERE"
-bedrock_agent_alias_id = "ALIAS_ID_HERE"
-
-# Security & Compliance
-data_classification    = "Internal"
-compliance_framework   = "SOC2"
-enable_cloudtrail     = true
-
-# Resource Tagging
-owner          = "devops-team@company.com"
-cost_center    = "IT-OPERATIONS"
-business_unit  = "INFRASTRUCTURE"
-```
-
-### Environment-Specific Configuration
-
-Create separate `.tfvars` files for each environment:
-
-- `dev.tfvars` - Development environment
-- `staging.tfvars` - Staging environment  
-- `prod.tfvars` - Production environment
+Provide separate parameter JSONs for each environment (e.g., `dev-hub.json`, `stage-hub.json`, `prod-hub.json`) in `cloudformation/params/`.
 
 ## 🔧 Advanced Configuration
 
 ### Custom Patch Policies
 
-```hcl
-# Custom patch configuration
-patch_classification_filter = ["Critical", "Important"]
-reboot_option              = "RebootIfNeeded"
-max_concurrency_percentage = 15  # Conservative for production
-max_error_percentage       = 2   # Low tolerance for failures
-```
+Use SSM Patch Baselines and CloudFormation parameters to control `MaxConcurrency`, `MaxErrors`, and approval rules for patches.
 
 ### High Availability Setup
 
-```hcl
-# Cross-region disaster recovery
-enable_cross_region_backup = true
-backup_region             = "us-west-2"
-rpo_hours                = 4   # Recovery Point Objective
-rto_hours                = 2   # Recovery Time Objective
-```
+Use cross-region S3 replication and DynamoDB PITR, and deploy read-only dashboards in secondary regions if required.
 
 ### VPC Integration
 
-```hcl
-# Deploy Lambda functions in VPC
-vpc_id                = "vpc-12345678"
-subnet_ids           = ["subnet-12345", "subnet-67890"]
-enable_vpc_endpoints = true
-```
+Attach Lambdas to your VPC subnets/security groups via CloudFormation parameters and ensure VPC endpoints exist for SSM/EC2 Messages where needed.
 
 ## 📊 Monitoring & Observability
 
@@ -230,19 +120,14 @@ Access via: AWS Console → CloudWatch → Dashboards → `{name_prefix}-product
 ### Alarms & Alerting
 
 Automated alarms for:
+ 
 - Step Functions execution failures
 - High Lambda error rates  
 - Long execution durations
 - Security violations
 - Resource capacity issues
 
-### X-Ray Tracing
-
-Distributed tracing enabled for:
-- End-to-end request flow
-- Performance bottleneck identification
-- Error root cause analysis
-- Cross-service dependency mapping
+<!-- X-Ray was removed for this CFN-only solution: no tracing guidance here to avoid confusion. -->
 
 ## 🔒 Security
 
@@ -296,18 +181,21 @@ pytest tests/load/ -v --duration=300
 ### Common Issues
 
 1. **Role Assumption Failures**
+
    ```bash
    # Check spoke account role configuration
    aws sts assume-role --role-arn arn:aws:iam::ACCOUNT:role/PatchExecRole --role-session-name test
    ```
 
 2. **Step Functions Timeout**
+
    ```bash
    # Check execution logs in CloudWatch
    aws logs filter-log-events --log-group-name /aws/stepfunctions/{sfn_name}
    ```
 
 3. **Lambda Function Errors**
+
    ```bash
    # Check function logs
    aws logs tail /aws/lambda/{function_name} --follow
@@ -315,12 +203,9 @@ pytest tests/load/ -v --duration=300
 
 ### Debug Mode
 
-Enable detailed logging:
-```hcl
-enable_detailed_monitoring = true
-log_retention_days         = 14
-xray_sampling_rate        = 1.0  # 100% sampling for debugging
-```
+Enable detailed logging via CloudWatch log level and longer retention settings in your CloudFormation parameters.
+
+For day-2 operations, see the Operations Runbook: `docs/runbook-operations.md`.
 
 ## 📈 Performance Optimization
 
@@ -334,24 +219,21 @@ xray_sampling_rate        = 1.0  # 100% sampling for debugging
 
 ### Production Tuning
 
-```hcl
-# Production optimizations
-max_concurrent_executions    = 10
-lambda_reserved_concurrency  = 50
-wave_pause_seconds          = 600  # 10 minutes between waves
-execution_timeout_minutes   = 480  # 8 hours total
-```
+Use CloudFormation parameters to tune:
+
+- Max concurrent accounts per wave (Step Functions Map concurrency)
+- Lambda reserved concurrency for pollers and senders
+- Wave pause seconds between waves
+- Execution timeout minutes
 
 ## 🔄 CI/CD Pipeline
 
-The GitHub Actions workflow includes:
+The GitHub Actions workflows include:
 
-1. **Validation**: Terraform format, validate, and plan
-2. **Security Scanning**: Checkov, TFLint, TFSec analysis
-3. **Cost Analysis**: Infracost estimation
-4. **Deployment**: Automated infrastructure deployment
-5. **Testing**: Integration and smoke tests
-6. **Notification**: Slack/Teams integration for status updates
+1. **Validation**: cfn-lint on templates, pytest on Python code
+2. **Deployment**: CloudFormation deploy (hub and spokes)
+3. **Testing**: Unit tests and optional integration tests
+4. **Notification**: Slack/Teams integration (optional)
 
 ### Pipeline Environments
 

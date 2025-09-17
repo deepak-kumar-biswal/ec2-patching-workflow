@@ -1,9 +1,0 @@
-region = "us-east-1"
-orchestrator_account_id = "111111111111"
-name_prefix = "ec2patch"
-bedrock_agent_id = "AGENT_ID"
-bedrock_agent_alias_id = "ALIAS_ID"
-wave_rules = [
-  { name="use1-wave1", schedule_expression="cron(0 3 ? * SAT *)", accounts=["222222222222","333333333333"], regions=["us-east-1"] },
-  { name="use1-wave2", schedule_expression="cron(30 3 ? * SAT *)", accounts=["444444444444","555555555555"], regions=["us-east-1"] }
-]

@@ -1,0 +1,832 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Patching Orchestrator - Hub (Pure CloudFormation, no SAM)
+
+Parameters:
+  NamePrefix:
+    Type: String
+    Default: ec2-patch
+    Description: Name prefix for resources
+  Environment:
+    Type: String
+    AllowedValues: [dev, test, stage, prod]
+    Default: dev
+  WaveMaxConcurrency:
+    Type: Number
+    Default: 2
+  AccountMaxConcurrency:
+    Type: Number
+    Default: 5
+  RegionMaxConcurrency:
+    Type: Number
+    Default: 3
+  PollIntervalSeconds:
+    Type: Number
+    Default: 15
+    Description: Seconds to wait between SSM status polls
+  SsmMaxConcurrency:
+    Type: String
+    Default: '10%'
+  SsmMaxErrors:
+    Type: String
+    Default: '1'
+  ApprovalTimeoutSeconds:
+    Type: Number
+    Default: 3600
+  ApprovalEmail:
+    Type: String
+    Default: ''
+  ApprovalSigningSecretString:
+    Type: String
+    NoEcho: true
+    Default: ''
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+  CrossAccountExternalId:
+    Type: String
+    Default: ''
+    NoEcho: true
+  LambdaArtifactBucket:
+    Type: String
+    Description: S3 bucket containing the Lambda zip artifact
+  LambdaArtifactKey:
+    Type: String
+    Description: S3 key (object key) of the Lambda zip artifact containing all handlers
+  ReservedConcSend:
+    Type: Number
+    Default: 10
+    Description: Reserved concurrency for SendSsmCommand Lambda
+  ReservedConcPoll:
+    Type: Number
+    Default: 20
+    Description: Reserved concurrency for PollSsmCommand Lambda
+  ReservedConcInventory:
+    Type: Number
+    Default: 5
+    Description: Reserved concurrency for PreEC2Inventory Lambda
+  ReservedConcPostVerify:
+    Type: Number
+    Default: 5
+    Description: Reserved concurrency for PostEC2Verify Lambda
+
+Conditions:
+  ApprovalEmailProvided: !Not [!Equals [!Ref ApprovalEmail, '']]
+  HasSecretValue: !Not [!Equals [!Ref ApprovalSigningSecretString, '']]
+
+Resources:
+  KmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub '${NamePrefix}-${Environment} KMS key for data at rest'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowRoot
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  KmsAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${NamePrefix}-${Environment}-data'
+      TargetKeyId: !Ref KmsKey
+
+  SnapshotsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref KmsKey
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionNonCurrent
+            Status: Enabled
+            NoncurrentVersionTransitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 365
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-${Environment}-snapshots'
+
+  SnapshotsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SnapshotsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTLS
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub '${SnapshotsBucket.Arn}'
+              - !Sub '${SnapshotsBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  PatchRunsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: !Sub '${NamePrefix}-${Environment}-patchruns'
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref KmsKey
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - AttributeName: scope
+          AttributeType: S
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: scope
+          KeyType: HASH
+        - AttributeName: id
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  ApprovalAuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: !Sub '${NamePrefix}-${Environment}-approval-audit'
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref KmsKey
+      AttributeDefinitions:
+        - AttributeName: audit_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: audit_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  ApprovalTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      KmsMasterKeyId: !Ref KmsKey
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-${Environment}-approvals'
+
+  ApprovalTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: ApprovalEmailProvided
+    Properties:
+      TopicArn: !Ref ApprovalTopic
+      Protocol: email
+      Endpoint: !Ref ApprovalEmail
+
+  ApprovalSigningSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '/${NamePrefix}/${Environment}/approval-signing'
+      Description: HMAC signing secret for approval links
+      KmsKeyId: !Ref KmsKey
+      SecretString: !If [HasSecretValue, !Ref ApprovalSigningSecretString, !Ref 'AWS::NoValue']
+      GenerateSecretString: !If
+        - HasSecretValue
+        - !Ref 'AWS::NoValue'
+        - { PasswordLength: 40 }
+
+  # Lambda IAM Roles
+  PreEC2InventoryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PreInvPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub 'arn:${AWS::Partition}:iam::*:role/${NamePrefix}-${Environment}-PatchExecRole'
+              - Effect: Allow
+                Action: [ s3:PutObject, s3:PutObjectTagging, s3:AbortMultipartUpload ]
+                Resource: !Sub '${SnapshotsBucket.Arn}/*'
+              - Effect: Allow
+                Action: [ kms:Encrypt, kms:GenerateDataKey* ]
+                Resource: !Ref KmsKey
+              - Effect: Allow
+                Action: [ dynamodb:PutItem, dynamodb:UpdateItem ]
+                Resource: !GetAtt PatchRunsTable.Arn
+
+  PollSsmCommandRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PollSsmPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub 'arn:${AWS::Partition}:iam::*:role/${NamePrefix}-${Environment}-PatchExecRole'
+              - Effect: Allow
+                Action: [ ssm:ListCommandInvocations, ssm:ListCommands ]
+                Resource: '*'
+
+  SendSsmCommandRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SendSsmPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub 'arn:${AWS::Partition}:iam::*:role/${NamePrefix}-${Environment}-PatchExecRole'
+
+  PostEC2VerifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PostVerifyPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub 'arn:${AWS::Partition}:iam::*:role/${NamePrefix}-${Environment}-PatchExecRole'
+              - Effect: Allow
+                Action: [ s3:PutObject ]
+                Resource: !Sub '${SnapshotsBucket.Arn}/*'
+              - Effect: Allow
+                Action: [ kms:Encrypt, kms:GenerateDataKey* ]
+                Resource: !Ref KmsKey
+              - Effect: Allow
+                Action: [ dynamodb:PutItem ]
+                Resource: !GetAtt PatchRunsTable.Arn
+
+  SendApprovalRequestRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SendApprovalPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ sns:Publish ]
+                Resource: !Ref ApprovalTopic
+              - Effect: Allow
+                Action: [ secretsmanager:GetSecretValue ]
+                Resource: !Ref ApprovalSigningSecret
+
+  ApprovalCallbackRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ApprovalCallbackPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ states:SendTaskSuccess, states:SendTaskFailure ]
+                Resource: '*'
+              - Effect: Allow
+                Action: [ dynamodb:PutItem ]
+                Resource: !GetAtt ApprovalAuditTable.Arn
+              - Effect: Allow
+                Action: [ sns:Publish ]
+                Resource: !Ref ApprovalTopic
+
+  ApprovalAuthorizerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AuthorizerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ secretsmanager:GetSecretValue ]
+                Resource: !Ref ApprovalSigningSecret
+
+  # Lambda functions (all from a single shared artifact; handlers point to modules)
+  PreEC2InventoryFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-PreEC2Inventory'
+      Runtime: python3.11
+      Handler: PreEC2Inventory.handler
+      Role: !GetAtt PreEC2InventoryRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 512
+      Timeout: 60
+      ReservedConcurrentExecutions: !Ref ReservedConcInventory
+      Environment:
+        Variables:
+          NAME_PREFIX: !Ref NamePrefix
+          ENVIRONMENT: !Ref Environment
+          S3_BUCKET: !Ref SnapshotsBucket
+          DDB_TABLE: !Ref PatchRunsTable
+
+  PollSsmCommandFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-PollSsmCommand'
+      Runtime: python3.11
+      Handler: PollSsmCommand.handler
+      Role: !GetAtt PollSsmCommandRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 512
+      Timeout: 60
+      ReservedConcurrentExecutions: !Ref ReservedConcPoll
+
+  SendSsmCommandFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-SendSsmCommand'
+      Runtime: python3.11
+      Handler: SendSsmCommand.handler
+      Role: !GetAtt SendSsmCommandRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 512
+      Timeout: 60
+      ReservedConcurrentExecutions: !Ref ReservedConcSend
+
+  PostEC2VerifyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-PostEC2Verify'
+      Runtime: python3.11
+      Handler: PostEC2Verify.handler
+      Role: !GetAtt PostEC2VerifyRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 512
+      Timeout: 60
+      ReservedConcurrentExecutions: !Ref ReservedConcPostVerify
+      Environment:
+        Variables:
+          NAME_PREFIX: !Ref NamePrefix
+          ENVIRONMENT: !Ref Environment
+          S3_BUCKET: !Ref SnapshotsBucket
+          DDB_TABLE: !Ref PatchRunsTable
+
+  SendApprovalRequestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-SendApprovalRequest'
+      Runtime: python3.11
+      Handler: SendApprovalRequest.handler
+      Role: !GetAtt SendApprovalRequestRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          TOPIC_ARN: !Ref ApprovalTopic
+          APPROVAL_SIGNING_SECRET_ARN: !Ref ApprovalSigningSecret
+          APIGW_BASE: !Sub 'https://${ApprovalApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+
+  ApprovalCallbackFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-ApprovalCallback'
+      Runtime: python3.11
+      Handler: ApprovalCallback.handler
+      Role: !GetAtt ApprovalCallbackRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          AUDIT_TABLE: !Ref ApprovalAuditTable
+          NOTIFICATION_TOPIC_ARN: !Ref ApprovalTopic
+          APPROVAL_EXPIRY_MINUTES: '60'
+
+  ApprovalAuthorizerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-ApprovalAuthorizer'
+      Runtime: python3.11
+      Handler: ApprovalAuthorizer.handler
+      Role: !GetAtt ApprovalAuthorizerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 256
+      Timeout: 10
+      Environment:
+        Variables:
+          APPROVAL_SIGNING_SECRET_ARN: !Ref ApprovalSigningSecret
+
+  # HTTP API with Lambda authorizer
+  ApprovalApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${NamePrefix}-${Environment}-approval-api'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ['*']
+        AllowMethods: ['GET']
+
+  ApprovalApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ApprovalApi
+      StageName: !Ref Environment
+      AutoDeploy: true
+
+  ApprovalAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref ApprovalApi
+      AuthorizerType: REQUEST
+      Name: ApprovalAuth
+      AuthorizerPayloadFormatVersion: '2.0'
+      IdentitySource:
+        - '$request.querystring.sig'
+        - '$request.querystring.timestamp'
+        - '$request.querystring.token'
+        - '$request.querystring.action'
+        - '$request.querystring.executionId'
+      AuthorizerUri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApprovalAuthorizerFunction.Arn}/invocations'
+
+  CallbackIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApprovalApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApprovalCallbackFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+
+  CallbackRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApprovalApi
+      RouteKey: 'GET /callback'
+      Target: !Sub 'integrations/${CallbackIntegration}'
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref ApprovalAuthorizer
+
+  CallbackLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApprovalCallbackFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApprovalApi}/*/*/callback'
+
+  AuthorizerLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApprovalAuthorizerFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApprovalApi}/*/*/*'
+
+  OrchestratorStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: states.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: OrchestratorInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ lambda:InvokeFunction ]
+                Resource:
+                  - !GetAtt PreEC2InventoryFunction.Arn
+                  - !GetAtt PollSsmCommandFunction.Arn
+                  - !GetAtt SendSsmCommandFunction.Arn
+                  - !GetAtt PostEC2VerifyFunction.Arn
+                  - !GetAtt SendApprovalRequestFunction.Arn
+              - Effect: Allow
+                Action: [ sns:Publish ]
+                Resource: !Ref ApprovalTopic
+              - Effect: Allow
+                Action: [ logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents ]
+                Resource: '*'
+
+  OrchestratorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/states/${NamePrefix}-${Environment}-orchestrator'
+      RetentionInDays: !Ref LogRetentionDays
+
+  OrchestratorStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${NamePrefix}-${Environment}-orchestrator'
+      RoleArn: !GetAtt OrchestratorStateMachineRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt OrchestratorLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: EC2 Patching Orchestrator (CFN)
+        StartAt: ManualApproval
+        States:
+          ManualApproval:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke.waitForTaskToken
+            TimeoutSeconds: !Ref ApprovalTimeoutSeconds
+            Parameters:
+              FunctionName: !Ref SendApprovalRequestFunction
+              Payload:
+                taskToken.$: '$$.Task.Token'
+                subject: 'EC2 Patching Approval Required'
+                details.$: '$'
+                executionId.$: '$$.Execution.Id'
+                estimatedDuration: 90
+            Catch:
+              - ErrorEquals: [ States.Timeout ]
+                ResultPath: $.error
+                Next: NotifyTimeout
+              - ErrorEquals: [ States.ALL ]
+                ResultPath: $.error
+                Next: NotifyFailure
+            Next: Waves
+          Waves:
+            Type: Map
+            ItemsPath: $.accountWaves
+            MaxConcurrency: !Ref WaveMaxConcurrency
+            End: true
+            Catch:
+              - ErrorEquals: [ States.ALL ]
+                ResultPath: $.error
+                Next: NotifyFailure
+            Iterator:
+              StartAt: PreWave
+              States:
+                PreWave:
+                  Type: Parallel
+                  Branches:
+                    - StartAt: Inventory
+                      States:
+                        Inventory:
+                          Type: Task
+                          Resource: arn:aws:states:::lambda:invoke
+                          Parameters:
+                            FunctionName: !Ref PreEC2InventoryFunction
+                            Payload.$: '$'
+                          End: true
+                  Next: PerAccount
+                PerAccount:
+                  Type: Map
+                  ItemsPath: $.accounts
+                  MaxConcurrency: !Ref AccountMaxConcurrency
+                  Parameters:
+                    account.$: '$$.Map.Item.Value'
+                    regions.$: '$.regions'
+                  Iterator:
+                    StartAt: PerRegion
+                    States:
+                      PerRegion:
+                        Type: Map
+                        ItemsPath: $.regions
+                        Parameters:
+                          region.$: '$$.Map.Item.Value'
+                          account.$: '$.account'
+                        MaxConcurrency: !Ref RegionMaxConcurrency
+                        Iterator:
+                          StartAt: SendSSM
+                          States:
+                            SendSSM:
+                              Type: Task
+                              Resource: arn:aws:states:::lambda:invoke
+                              ResultPath: $.ssm
+                              Parameters:
+                                FunctionName: !Ref SendSsmCommandFunction
+                                Payload:
+                                  roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                  externalId: !Ref CrossAccountExternalId
+                                  region.$: '$.region'
+                                  documentName: 'AWS-RunPatchBaseline'
+                                  targets:
+                                    - Key: 'tag:PatchGroup'
+                                      Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                  maxConcurrency: !Ref SsmMaxConcurrency
+                                  maxErrors: !Ref SsmMaxErrors
+                                  outputS3Bucket: !Ref SnapshotsBucket
+                                  outputS3Prefix.$: 'States.Format("runs/{}/account-{}/region-{}", $$.Execution.Id, $.account, $.region)'
+                              Next: MonitorSSM
+                              Retry:
+                                - ErrorEquals: [ States.TaskFailed ]
+                                  IntervalSeconds: 5
+                                  BackoffRate: 2.0
+                                  MaxAttempts: 3
+                              Catch:
+                                - ErrorEquals: [ States.ALL ]
+                                  ResultPath: $.error
+                                  Next: NotifyFailure
+                            MonitorSSM:
+                              Type: Task
+                              Resource: arn:aws:states:::lambda:invoke
+                              ResultPath: $.poll
+                              Parameters:
+                                FunctionName: !Ref PollSsmCommandFunction
+                                Payload:
+                                  roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                  region.$: '$.region'
+                                  externalId: !Ref CrossAccountExternalId
+                                  cmd:
+                                    CommandId.$: '$.ssm.Payload.CommandId'
+                              Retry:
+                                - ErrorEquals: [ States.TaskFailed ]
+                                  IntervalSeconds: 5
+                                  BackoffRate: 2.0
+                                  MaxAttempts: 3
+                              Catch:
+                                - ErrorEquals: [ States.ALL ]
+                                  ResultPath: $.error
+                                  Next: NotifyFailure
+                              Next: PollComplete?
+                            PollComplete:
+                              Type: Choice
+                              Choices:
+                                - Variable: '$.poll.Payload.should_continue_polling'
+                                  BooleanEquals: true
+                                  Next: WaitBeforePoll
+                              Default: PostVerify
+                            WaitBeforePoll:
+                              Type: Wait
+                              Seconds: !Ref PollIntervalSeconds
+                              Next: MonitorSSM
+                            PostVerify:
+                              Type: Task
+                              Resource: arn:aws:states:::lambda:invoke
+                              Parameters:
+                                FunctionName: !Ref PostEC2VerifyFunction
+                                Payload.$: '$'
+                              ResultPath: $.post
+                              Retry:
+                                - ErrorEquals: [ States.TaskFailed ]
+                                  IntervalSeconds: 5
+                                  BackoffRate: 2.0
+                                  MaxAttempts: 3
+                              Catch:
+                                - ErrorEquals: [ States.ALL ]
+                                  ResultPath: $.error
+                                  Next: NotifyFailure
+                              Next: EvaluateIssues
+                            EvaluateIssues:
+                              Type: Choice
+                              Choices:
+                                - And:
+                                    - Variable: '$.post.Payload.hasIssues'
+                                      BooleanEquals: true
+                                    - Variable: '$$.Execution.Input.abortOnIssues'
+                                      BooleanEquals: true
+                                  Next: AbortDueToIssues
+                              Default: RegionComplete
+                            RegionComplete:
+                              Type: Succeed
+                            AbortDueToIssues:
+                              Type: Fail
+                              Error: IssuesDetected
+                              Cause: AbortOnIssues flag enabled and issues detected in region
+          NotifyFailure:
+            Type: Task
+            Resource: arn:aws:states:::sns:publish
+            Parameters:
+              TopicArn: !Ref ApprovalTopic
+              Subject: 'EC2 Patching Failure Notification'
+              Message.$: 'States.JsonToString($.error)'
+            End: true
+          NotifyTimeout:
+            Type: Task
+            Resource: arn:aws:states:::sns:publish
+            Parameters:
+              TopicArn: !Ref ApprovalTopic
+              Subject: 'EC2 Patching Approval Timed Out'
+              Message: 'Approval window expired without decision.'
+            End: true
+
+  # Basic alarm on failed executions
+  StateMachineFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${NamePrefix}-${Environment}-orchestrator-failed'
+      AlarmDescription: 'Alarm when Step Functions orchestration fails.'
+      Namespace: 'AWS/States'
+      MetricName: 'ExecutionsFailed'
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref OrchestratorStateMachine
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref ApprovalTopic
+
+Outputs:
+  ApiUrl:
+    Value: !Sub 'https://${ApprovalApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+  ApprovalTopicArn:
+    Value: !Ref ApprovalTopic
+  PatchRunsTableName:
+    Value: !Ref PatchRunsTable
+  SnapshotsBucketName:
+    Value: !Ref SnapshotsBucket
+  StateMachineArn:
+    Value: !Ref OrchestratorStateMachine

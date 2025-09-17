@@ -1,4 +1,4 @@
-name: Deploy Spokes (Terraform Matrix)
+name: Deploy Spokes (CloudFormation Matrix)
 
 on:
   workflow_dispatch:
@@ -16,25 +16,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Lint CFN templates
+        run: |
+          pip install cfn-lint
+          cfn-lint cloudformation/spoke-cfn.yaml
+
       - name: Configure AWS credentials (Spoke)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ matrix.account_id }}:role/${{ vars.SPOKE_DEPLOY_ROLE || 'GitHubOIDCDeploy' }}
-          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          aws-region: us-east-1
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.6
-
-      - name: Terraform Init
-        working-directory: ./terraform/spoke
-        run: terraform init
-
-      - name: Terraform Apply
-        working-directory: ./terraform/spoke
+      - name: Render params
+        shell: bash
         env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}
-          TF_VAR_orchestrator_account_id: ${{ vars.HUB_ACCOUNT_ID }}
-          TF_VAR_role_name: PatchExecRole
-        run: terraform apply -auto-approve
+          EXTERNAL_ID: ${{ secrets.CROSS_ACCOUNT_EXTERNAL_ID }}
+        run: |
+          jq \
+            --arg prefix "${{ vars.NAME_PREFIX || 'ec2-patch' }}" \
+            --arg env "${{ vars.ENVIRONMENT || 'dev' }}" \
+            --arg hub "${{ vars.HUB_ACCOUNT_ID }}" \
+            --arg ext "${EXTERNAL_ID}" \
+            '.NamePrefix=$prefix | .Environment=$env | .HubAccountId=$hub | .ExternalId=$ext' \
+            cloudformation/params/dev-spoke.json > params.effective.json
+
+      - name: Deploy Spoke stack (CFN)
+        run: |
+          PARAMS=$(jq -r 'to_entries | map("\(.key)=\(.value|tostring)") | join(" ")' params.effective.json)
+          aws cloudformation deploy \
+            --template-file cloudformation/spoke-cfn.yaml \
+            --stack-name ec2-patch-spoke \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides $PARAMS

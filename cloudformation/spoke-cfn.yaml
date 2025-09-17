@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Patching Orchestrator - Spoke (Cross-account execution role, pure CFN)
+
+Parameters:
+  NamePrefix:
+    Type: String
+    Default: ec2-patch
+  Environment:
+    Type: String
+    AllowedValues: [dev, test, stage, prod]
+    Default: dev
+  HubAccountId:
+    Type: String
+    Description: Hub AWS Account ID allowed to assume this role
+  ExternalId:
+    Type: String
+    Description: ExternalId required for cross-account STS AssumeRole
+
+Resources:
+  PatchExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${NamePrefix}-${Environment}-PatchExecRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${HubAccountId}:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+      Policies:
+        - PolicyName: PatchExecLeastPrivilege
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: SSMRunCommand
+                Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                  - ssm:ListCommands
+                  - ssm:DescribeInstanceInformation
+                Resource: '*'
+              - Sid: TagRestrictedInstances
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                Resource: '*'
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt PatchExecRole.Arn

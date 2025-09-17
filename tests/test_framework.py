@@ -11,20 +11,34 @@ This module provides comprehensive testing capabilities including:
 """
 
 import unittest
+import os
+import sys
 import boto3
 import json
 import time
 import threading
 from unittest.mock import Mock, patch, MagicMock
-from moto import mock_s3, mock_dynamodb, mock_sns, mock_stepfunctions
+from moto import mock_aws
 import pytest
 from datetime import datetime, timedelta
 import concurrent.futures
 import logging
 
+# Make lambda modules importable in tests
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'lambda')))
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class DummyContext:
+    function_name = 'test-function'
+    function_version = '$LATEST'
+    aws_request_id = '0000000000000000'
+    memory_limit_in_mb = 128
+
+    def get_remaining_time_in_millis(self):
+        return 300000
 
 class PatchingTestFramework:
     """Main test framework class"""
@@ -35,16 +49,8 @@ class PatchingTestFramework:
     
     def setup_test_environment(self):
         """Setup test environment with mock AWS services"""
-        self.s3_mock = mock_s3()
-        self.dynamodb_mock = mock_dynamodb()
-        self.sns_mock = mock_sns()
-        self.sfn_mock = mock_stepfunctions()
-        
-        # Start mocks
-        self.s3_mock.start()
-        self.dynamodb_mock.start()
-        self.sns_mock.start()
-        self.sfn_mock.start()
+        self.aws_mock = mock_aws()
+        self.aws_mock.start()
         
         # Create test resources
         self.setup_mock_resources()
@@ -76,16 +82,15 @@ class PatchingTestFramework:
     
     def teardown(self):
         """Clean up test environment"""
-        self.s3_mock.stop()
-        self.dynamodb_mock.stop()
-        self.sns_mock.stop()
-        self.sfn_mock.stop()
+        self.aws_mock.stop()
 
 
 class TestLambdaFunctions(unittest.TestCase):
     """Unit tests for Lambda functions"""
     
     def setUp(self):
+        os.environ.setdefault('AWS_DEFAULT_REGION', 'us-east-1')
+        os.environ.setdefault('AWS_REGION', 'us-east-1')
         self.framework = PatchingTestFramework()
     
     def tearDown(self):
@@ -97,8 +102,8 @@ class TestLambdaFunctions(unittest.TestCase):
     })
     def test_pre_ec2_inventory_success(self):
         """Test PreEC2Inventory function success case"""
-        # Import the enhanced function
-        from PreEC2Inventory_enhanced import handler
+        # Import the function under test
+        from PreEC2Inventory import handler
         
         event = {
             'accounts': ['123456789012'],
@@ -142,12 +147,12 @@ class TestLambdaFunctions(unittest.TestCase):
             mock_boto_client.side_effect = mock_client
             
             # Execute function
-            result = handler(event, {})
-            
-            # Assertions
-            self.assertTrue(result['success'])
+            result = handler(event, DummyContext())
+
+            # Assertions (aligned to current handler contract)
             self.assertEqual(result['statusCode'], 200)
-            self.assertEqual(len(result['results']['success']), 1)
+            self.assertTrue(result['results']['success'])
+            self.assertEqual(result['results']['summary']['processed'], 1)
     
     @patch.dict('os.environ', {
         'S3_BUCKET': 'test-patching-bucket',
@@ -155,7 +160,7 @@ class TestLambdaFunctions(unittest.TestCase):
     })
     def test_pre_ec2_inventory_failure(self):
         """Test PreEC2Inventory function failure case"""
-        from PreEC2Inventory_enhanced import handler
+        from PreEC2Inventory import handler
         
         event = {
             'accounts': ['123456789012'],
@@ -167,12 +172,70 @@ class TestLambdaFunctions(unittest.TestCase):
             mock_sts.assume_role.side_effect = Exception("Role assumption failed")
             mock_boto_client.return_value = mock_sts
             
-            result = handler(event, {})
-            
-            # Should handle error gracefully
-            self.assertFalse(result['success'])
-            self.assertEqual(result['statusCode'], 206)  # Partial content
-            self.assertEqual(len(result['results']['failures']), 1)
+            result = handler(event, DummyContext())
+
+            # Should handle error gracefully (no successes -> 500)
+            self.assertEqual(result['statusCode'], 500)
+            self.assertFalse(result['results']['success'])
+            self.assertEqual(result['results']['summary']['failed'], 1)
+
+    @patch.dict('os.environ', {
+        'S3_BUCKET': 'test-patching-bucket',
+        'DDB_TABLE': 'test-patch-runs'
+    })
+    def test_pre_ec2_inventory_partial_success(self):
+        """Test PreEC2Inventory function partial success (206)"""
+        from PreEC2Inventory import handler
+
+        # Two accounts, one succeeds, one fails
+        event = {
+            'accounts': ['123456789012', '210987654321'],
+            'regions': ['us-east-1']
+        }
+
+        with patch('boto3.client') as mock_boto_client:
+            # Mock STS/SSM behavior that alternates success/failure by account
+            def mock_client(service, **kwargs):
+                if service == 'sts':
+                    mock_sts = Mock()
+                    # Fail for the second account when assume_role is called
+                    def assume_role_side_effect(RoleArn, **_):
+                        if RoleArn.startswith('arn:aws:iam::210987654321:'):
+                            raise Exception('Role assumption failed')
+                        return {
+                            'Credentials': {
+                                'AccessKeyId': 'test-key',
+                                'SecretAccessKey': 'test-secret',
+                                'SessionToken': 'test-token'
+                            }
+                        }
+                    mock_sts.assume_role.side_effect = assume_role_side_effect
+                    return mock_sts
+                if service == 'ssm':
+                    mock_ssm = Mock()
+                    mock_paginator = Mock()
+                    mock_paginator.paginate.return_value = [{
+                        'InstanceInformationList': [
+                            {
+                                'InstanceId': 'i-abcdef1234567890',
+                                'PlatformType': 'Linux',
+                                'PingStatus': 'Online'
+                            }
+                        ]
+                    }]
+                    mock_ssm.get_paginator.return_value = mock_paginator
+                    return mock_ssm
+                return Mock()
+
+            mock_boto_client.side_effect = mock_client
+
+            result = handler(event, DummyContext())
+
+            # Expect partial success: one processed, one failed
+            self.assertEqual(result['statusCode'], 206)
+            self.assertFalse(result['results']['success'])
+            self.assertEqual(result['results']['summary']['processed'], 1)
+            self.assertEqual(result['results']['summary']['failed'], 1)
 
 
 class TestStepFunctions(unittest.TestCase):
@@ -272,7 +335,8 @@ class TestScalability(unittest.TestCase):
         
         # Assert reasonable performance
         self.assertLess(processing_time, 10.0)  # Should complete within 10 seconds for simulation
-        self.assertEqual(total_combinations, 1000)  # 100 accounts * 5 regions * 2 waves
+        # 2 waves of 50 accounts each * 5 regions = 500
+        self.assertEqual(total_combinations, 500)
 
 
 class TestSecurity(unittest.TestCase):
@@ -336,7 +400,6 @@ class TestEndToEnd(unittest.TestCase):
             ],
             'ec2': {'tagKey': 'PatchGroup', 'tagValue': 'test'},
             'snsTopicArn': self.framework.test_topic_arn,
-            'bedrock': {'agentId': 'test-agent', 'agentAliasId': 'test-alias'},
             'wavePauseSeconds': 0,
             'abortOnIssues': False
         }

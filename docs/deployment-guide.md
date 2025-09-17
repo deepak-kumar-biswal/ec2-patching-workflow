@@ -7,17 +7,19 @@ This guide provides step-by-step instructions for deploying the Enterprise EC2 M
 ## Prerequisites
 
 ### Required Tools
-- Terraform >= 1.5.0
+
 - AWS CLI >= 2.0
 - Python >= 3.9 (for testing)
 - Git
 
 ### AWS Permissions
+
 - Administrative access to hub account
 - Cross-account role creation permissions in spoke accounts
 - EventBridge, Step Functions, Lambda, and Systems Manager permissions
 
 ### Account Setup
+
 ```bash
 # Verify AWS CLI configuration
 aws sts get-caller-identity
@@ -27,122 +29,48 @@ export HUB_ACCOUNT_ID=111111111111
 export AWS_DEFAULT_REGION=us-east-1
 ```
 
-## Step 1: Hub Account Deployment
+## Step 1: Hub Account Deployment (CloudFormation)
 
-### 1.1 Initialize Terraform
-
-```bash
-cd terraform/hub
-terraform init -backend-config="bucket=your-terraform-state-bucket"
-```
-
-### 1.2 Configure Variables
-
-Create `terraform.tfvars`:
-
-```hcl
-region                    = "us-east-1"
-orchestrator_account_id   = "111111111111"
-name_prefix              = "ec2patch"
-bedrock_agent_id         = "YOUR_BEDROCK_AGENT_ID"
-bedrock_agent_alias_id   = "YOUR_BEDROCK_ALIAS_ID"
-
-wave_rules = [
-  {
-    name                = "critical-production"
-    schedule_expression = "cron(0 2 ? * SUN *)"
-    accounts           = ["222222222222", "333333333333"]
-    regions            = ["us-east-1", "us-west-2"]
-  },
-  {
-    name                = "development-staging"
-    schedule_expression = "cron(0 3 ? * SUN *)"
-    accounts           = ["444444444444", "555555555555"] 
-    regions            = ["us-east-1"]
-  }
-]
-
-sns_email_subscriptions = [
-  "ops-team@company.com",
-  "security-team@company.com"
-]
-
-wave_pause_seconds = 300
-abort_on_issues   = true
-```
-
-### 1.3 Deploy Hub Infrastructure
+### 1.1 Prepare Lambda Artifact
 
 ```bash
-# Plan deployment
-terraform plan -out=hub.tfplan
-
-# Apply changes
-terraform apply hub.tfplan
-
-# Save outputs for spoke deployment
-terraform output -json > ../spoke/hub_outputs.json
+zip -r lambda.zip lambda -x "**/__pycache__/**"
+aws s3 cp lambda.zip s3://<artifact-bucket>/ec2-patch/<sha>/lambda.zip
 ```
 
-## Step 2: Spoke Account Deployment
+### 1.2 Configure Parameters
 
-### 2.1 Deploy to Each Spoke Account
+Edit `cloudformation/params/dev-hub.json` (or your env variant) to set values for:
 
-For each target account:
+- `CrossAccountExternalId`
+- `LambdaArtifactBucket`
+- `LambdaArtifactKey`
+
+### 1.3 Deploy Hub Stack
 
 ```bash
-cd terraform/spoke
-
-# Configure AWS credentials for spoke account
-aws configure set profile spoke-account-222222222222
-
-# Initialize Terraform
-terraform init
-
-# Deploy spoke resources
-terraform apply \
-  -var="region=us-east-1" \
-  -var="orchestrator_account_id=111111111111" \
-  -var="role_name=PatchExecRole"
+aws cloudformation deploy \
+    --template-file cloudformation/hub-cfn.yaml \
+    --stack-name ec2-patch-hub \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --parameter-overrides file://cloudformation/params/dev-hub.json
 ```
 
-### 2.2 Automated Spoke Deployment Script
+## Step 2: Spoke Account Deployment (CloudFormation)
+
+For each target account, update `cloudformation/params/dev-spoke.json` with:
+
+- `HubAccountId`
+- `ExternalId`
+
+Then deploy the Spoke stack:
 
 ```bash
-#!/bin/bash
-# deploy-spokes.sh
-
-SPOKE_ACCOUNTS=("222222222222" "333333333333" "444444444444" "555555555555")
-HUB_ACCOUNT="111111111111"
-REGION="us-east-1"
-
-for account in "${SPOKE_ACCOUNTS[@]}"; do
-    echo "Deploying to spoke account: $account"
-    
-    # Assume role in spoke account
-    aws sts assume-role \
-        --role-arn "arn:aws:iam::${account}:role/OrganizationAccountAccessRole" \
-        --role-session-name "ec2-patch-deploy" \
-        --output json > /tmp/creds-${account}.json
-    
-    # Extract credentials
-    export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' /tmp/creds-${account}.json)
-    export AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' /tmp/creds-${account}.json)
-    export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' /tmp/creds-${account}.json)
-    
-    # Deploy spoke
-    cd terraform/spoke
-    terraform init
-    terraform apply -auto-approve \
-        -var="region=${REGION}" \
-        -var="orchestrator_account_id=${HUB_ACCOUNT}"
-    
-    cd ../..
-    
-    # Cleanup
-    rm /tmp/creds-${account}.json
-    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
-done
+aws cloudformation deploy \
+    --template-file cloudformation/spoke-cfn.yaml \
+    --stack-name ec2-patch-spoke \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --parameter-overrides file://cloudformation/params/dev-spoke.json
 ```
 
 ## Step 3: Verification
@@ -204,12 +132,9 @@ aws ec2 create-tags \
            Key=MaintenanceWindow,Value=sunday-2am
 ```
 
-### 4.2 Configure Bedrock Agent
+### 4.2 Approval Callback and Notifications
 
-1. Create Bedrock Agent with patch analysis capabilities
-2. Configure knowledge base with patch documentation
-3. Set up action groups for analysis functions
-4. Update Terraform variables with agent IDs
+Ensure the approval callback API and notification email (if used) are configured via hub parameters.
 
 ### 4.3 Set Up Monitoring
 
@@ -276,8 +201,8 @@ aws events disable-rule --name ec2patch-wave1-critical
 # Stop running executions
 aws stepfunctions stop-execution --execution-arn "$EXECUTION_ARN"
 
-# Rollback Terraform if needed
-terraform apply -target=resource.to.rollback
+# Rollback CloudFormation if needed
+aws cloudformation delete-stack --stack-name ec2-patch-hub
 ```
 
 ## Step 7: Monitoring Setup
@@ -323,7 +248,7 @@ aws logs start-query \
 - AWS Systems Manager documentation
 - Step Functions troubleshooting guide
 - Lambda function logs in CloudWatch
-- Terraform state file for resource tracking
+  
 
 ## Best Practices
 
