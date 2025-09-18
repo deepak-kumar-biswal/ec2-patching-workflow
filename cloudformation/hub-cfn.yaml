@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: EC2 Patching Orchestrator - Hub (Pure CloudFormation, no SAM)
+Description: EC2 Patching Orchestrator - Hub (Simplified - No Approval Workflow)
 
 Parameters:
   NamePrefix:
@@ -29,16 +29,6 @@ Parameters:
   SsmMaxErrors:
     Type: String
     Default: '1'
-  ApprovalTimeoutSeconds:
-    Type: Number
-    Default: 3600
-  ApprovalEmail:
-    Type: String
-    Default: ''
-  ApprovalSigningSecretString:
-    Type: String
-    NoEcho: true
-    Default: ''
   LogRetentionDays:
     Type: Number
     Default: 30
@@ -68,12 +58,69 @@ Parameters:
     Type: Number
     Default: 5
     Description: Reserved concurrency for PostEC2Verify Lambda
+  EnableScheduledExecution:
+    Type: String
+    AllowedValues: [ENABLED, DISABLED]
+    Default: DISABLED
+    Description: Enable or disable the scheduled EventBridge rule
+  PatchingSchedule:
+    Type: String
+    Default: 'cron(0 2 ? * SUN *)'
+    Description: Cron expression for patching schedule (default - Sundays at 2 AM UTC)
+  DefaultPatchGroup:
+    Type: String
+    Default: 'prod-servers'
+    Description: Default EC2 tag value for PatchGroup to target
+  NotificationEmail:
+    Type: String
+    Default: ''
+    Description: Email address for patching notifications (leave empty to disable notifications)
+  CustomSsmDocuments:
+    Type: String
+    AllowedValues: [ENABLED, DISABLED]
+    Default: DISABLED
+    Description: Enable custom SSM documents for pre/post patch operations
+  WindowsPrePatchDocument:
+    Type: String
+    Default: 'WindowsPrePatch'
+    Description: Custom SSM document for Windows pre-patch operations
+  WindowsPatchDocument:
+    Type: String
+    Default: 'WindowsPatch'
+    Description: Custom SSM document for Windows patching
+  WindowsPostPatchDocument:
+    Type: String
+    Default: 'WindowsPostPatch'
+    Description: Custom SSM document for Windows post-patch operations
+  LinuxPrePatchDocument:
+    Type: String
+    Default: 'LinuxPrePatch'
+    Description: Custom SSM document for Linux pre-patch operations
+  LinuxPatchDocument:
+    Type: String
+    Default: 'LinuxPatch'
+    Description: Custom SSM document for Linux patching
+  LinuxPostPatchDocument:
+    Type: String
+    Default: 'LinuxPostPatch'
+    Description: Custom SSM document for Linux post-patch operations
 
 Conditions:
-  ApprovalEmailProvided: !Not [!Equals [!Ref ApprovalEmail, '']]
-  HasSecretValue: !Not [!Equals [!Ref ApprovalSigningSecretString, '']]
+  HasNotificationEmail: !Not [!Equals [!Ref NotificationEmail, '']]
+  UseCustomDocuments: !Equals [!Ref CustomSsmDocuments, 'ENABLED']
 
 Resources:
+  # SNS Topic for notifications (optional)
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasNotificationEmail
+    Properties:
+      TopicName: !Sub '${NamePrefix}-${Environment}-patching-notifications'
+      KmsMasterKeyId: !Ref KmsKey
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref NotificationEmail
+
   KmsKey:
     Type: AWS::KMS::Key
     Properties:
@@ -169,55 +216,8 @@ Resources:
         AttributeName: ttl
         Enabled: true
 
-  ApprovalAuditTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      BillingMode: PAY_PER_REQUEST
-      TableName: !Sub '${NamePrefix}-${Environment}-approval-audit'
-      SSESpecification:
-        SSEEnabled: true
-        SSEType: KMS
-        KMSMasterKeyId: !Ref KmsKey
-      AttributeDefinitions:
-        - AttributeName: audit_id
-          AttributeType: S
-      KeySchema:
-        - AttributeName: audit_id
-          KeyType: HASH
-      TimeToLiveSpecification:
-        AttributeName: ttl
-        Enabled: true
-
-  ApprovalTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      KmsMasterKeyId: !Ref KmsKey
-      Tags:
-        - Key: Name
-          Value: !Sub '${NamePrefix}-${Environment}-approvals'
-
-  ApprovalTopicSubscription:
-    Type: AWS::SNS::Subscription
-    Condition: ApprovalEmailProvided
-    Properties:
-      TopicArn: !Ref ApprovalTopic
-      Protocol: email
-      Endpoint: !Ref ApprovalEmail
-
-  ApprovalSigningSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub '/${NamePrefix}/${Environment}/approval-signing'
-      Description: HMAC signing secret for approval links
-      KmsKeyId: !Ref KmsKey
-      SecretString: !If [HasSecretValue, !Ref ApprovalSigningSecretString, !Ref 'AWS::NoValue']
-      GenerateSecretString: !If
-        - HasSecretValue
-        - !Ref 'AWS::NoValue'
-        - { PasswordLength: 40 }
-
-  # Lambda IAM Roles
-  PreEC2InventoryRole:
+  # Unified Execution Role (consolidates Lambda + Step Functions + EventBridge permissions)
+  UnifiedExecutionRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -226,181 +226,69 @@ Resources:
           - Effect: Allow
             Principal: { Service: lambda.amazonaws.com }
             Action: sts:AssumeRole
+          - Effect: Allow
+            Principal: { Service: states.amazonaws.com }
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal: { Service: events.amazonaws.com }
+            Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: PreInvPolicy
+        - PolicyName: UnifiedOrchestrationPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # Cross-account role assumption for all spoke accounts
               - Effect: Allow
                 Action: sts:AssumeRole
                 Resource: !Sub 'arn:${AWS::Partition}:iam::*:role/${NamePrefix}-${Environment}-PatchExecRole'
+              # S3 permissions for storing artifacts and outputs
               - Effect: Allow
                 Action: [ s3:PutObject, s3:PutObjectTagging, s3:AbortMultipartUpload ]
                 Resource: !Sub '${SnapshotsBucket.Arn}/*'
+              # KMS permissions for encryption/decryption
               - Effect: Allow
                 Action: [ kms:Encrypt, kms:GenerateDataKey* ]
                 Resource: !Ref KmsKey
+              # DynamoDB permissions for execution state tracking
               - Effect: Allow
                 Action: [ dynamodb:PutItem, dynamodb:UpdateItem ]
                 Resource: !GetAtt PatchRunsTable.Arn
-
-  PollSsmCommandRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: { Service: lambda.amazonaws.com }
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: PollSsmPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
+              # SSM permissions for monitoring command execution
               - Effect: Allow
-                Action: sts:AssumeRole
-                Resource: !Sub 'arn:${AWS::Partition}:iam::*:role/${NamePrefix}-${Environment}-PatchExecRole'
-              - Effect: Allow
-                Action: [ ssm:ListCommandInvocations, ssm:ListCommands ]
+                Action: [ ssm:ListCommandInvocations, ssm:ListCommands, ssm:GetCommandInvocation ]
                 Resource: '*'
-              - Effect: Allow
-                Action: [ ssm:GetCommandInvocation ]
-                Resource: '*'
-              - Effect: Allow
-                Action: [ s3:PutObject, s3:PutObjectTagging, s3:AbortMultipartUpload ]
-                Resource: !Sub '${SnapshotsBucket.Arn}/*'
-              - Effect: Allow
-                Action: [ kms:Encrypt, kms:GenerateDataKey* ]
-                Resource: !Ref KmsKey
-
-  SendSsmCommandRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: { Service: lambda.amazonaws.com }
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: SendSsmPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: sts:AssumeRole
-                Resource: !Sub 'arn:${AWS::Partition}:iam::*:role/${NamePrefix}-${Environment}-PatchExecRole'
-
-  PostEC2VerifyRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: { Service: lambda.amazonaws.com }
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: PostVerifyPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: sts:AssumeRole
-                Resource: !Sub 'arn:${AWS::Partition}:iam::*:role/${NamePrefix}-${Environment}-PatchExecRole'
-              - Effect: Allow
-                Action: [ s3:PutObject ]
-                Resource: !Sub '${SnapshotsBucket.Arn}/*'
-              - Effect: Allow
-                Action: [ kms:Encrypt, kms:GenerateDataKey* ]
-                Resource: !Ref KmsKey
-              - Effect: Allow
-                Action: [ dynamodb:PutItem ]
-                Resource: !GetAtt PatchRunsTable.Arn
+              # CloudWatch metrics for post-verification reporting
               - Effect: Allow
                 Action: [ cloudwatch:PutMetricData ]
                 Resource: '*'
                 Condition:
                   StringEquals:
                     cloudwatch:namespace: 'EC2Patching/Orchestrator'
-
-  SendApprovalRequestRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: { Service: lambda.amazonaws.com }
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: SendApprovalPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
+              # Step Functions permissions to invoke Lambda functions
               - Effect: Allow
-                Action: [ sns:Publish ]
-                Resource: !Ref ApprovalTopic
+                Action: [ lambda:InvokeFunction ]
+                Resource:
+                  - !GetAtt PreEC2InventoryFunction.Arn
+                  - !GetAtt PollSsmCommandFunction.Arn
+                  - !GetAtt SendSsmCommandFunction.Arn
+                  - !GetAtt PostEC2VerifyFunction.Arn
+              # CloudWatch Logs permissions for Step Functions
               - Effect: Allow
-                Action: [ secretsmanager:GetSecretValue ]
-                Resource: !Ref ApprovalSigningSecret
-
-  ApprovalCallbackRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: { Service: lambda.amazonaws.com }
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: ApprovalCallbackPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: [ states:SendTaskSuccess, states:SendTaskFailure ]
+                Action: [ logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents ]
                 Resource: '*'
+              # EventBridge permissions to start Step Functions executions
               - Effect: Allow
-                Action: [ dynamodb:PutItem ]
-                Resource: !GetAtt ApprovalAuditTable.Arn
+                Action: [ states:StartExecution ]
+                Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${NamePrefix}-${Environment}-orchestrator'
+              # SNS permissions for notifications (conditional)
               - Effect: Allow
                 Action: [ sns:Publish ]
-                Resource: !Ref ApprovalTopic
-
-  ApprovalAuthorizerRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: { Service: lambda.amazonaws.com }
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: AuthorizerPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: [ secretsmanager:GetSecretValue ]
-                Resource: !Ref ApprovalSigningSecret
+                Resource: !If 
+                  - HasNotificationEmail
+                  - !Ref NotificationTopic
+                  - !Ref AWS::NoValue
 
   # Lambda functions (all from a single shared artifact; handlers point to modules)
   PreEC2InventoryFunction:
@@ -409,7 +297,7 @@ Resources:
       FunctionName: !Sub '${NamePrefix}-${Environment}-PreEC2Inventory'
       Runtime: python3.11
       Handler: PreEC2Inventory.handler
-      Role: !GetAtt PreEC2InventoryRole.Arn
+      Role: !GetAtt UnifiedExecutionRole.Arn
       Code:
         S3Bucket: !Ref LambdaArtifactBucket
         S3Key: !Ref LambdaArtifactKey
@@ -422,6 +310,10 @@ Resources:
           ENVIRONMENT: !Ref Environment
           S3_BUCKET: !Ref SnapshotsBucket
           DDB_TABLE: !Ref PatchRunsTable
+          SNS_TOPIC_ARN: !If 
+            - HasNotificationEmail
+            - !Ref NotificationTopic
+            - ''
 
   PollSsmCommandFunction:
     Type: AWS::Lambda::Function
@@ -429,13 +321,19 @@ Resources:
       FunctionName: !Sub '${NamePrefix}-${Environment}-PollSsmCommand'
       Runtime: python3.11
       Handler: PollSsmCommand.handler
-      Role: !GetAtt PollSsmCommandRole.Arn
+      Role: !GetAtt UnifiedExecutionRole.Arn
       Code:
         S3Bucket: !Ref LambdaArtifactBucket
         S3Key: !Ref LambdaArtifactKey
       MemorySize: 512
       Timeout: 60
       ReservedConcurrentExecutions: !Ref ReservedConcPoll
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !If 
+            - HasNotificationEmail
+            - !Ref NotificationTopic
+            - ''
 
   SendSsmCommandFunction:
     Type: AWS::Lambda::Function
@@ -443,13 +341,26 @@ Resources:
       FunctionName: !Sub '${NamePrefix}-${Environment}-SendSsmCommand'
       Runtime: python3.11
       Handler: SendSsmCommand.handler
-      Role: !GetAtt SendSsmCommandRole.Arn
+      Role: !GetAtt UnifiedExecutionRole.Arn
       Code:
         S3Bucket: !Ref LambdaArtifactBucket
         S3Key: !Ref LambdaArtifactKey
       MemorySize: 512
       Timeout: 60
       ReservedConcurrentExecutions: !Ref ReservedConcSend
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !If 
+            - HasNotificationEmail
+            - !Ref NotificationTopic
+            - ''
+          USE_CUSTOM_DOCUMENTS: !Ref CustomSsmDocuments
+          WINDOWS_PRE_PATCH_DOC: !Ref WindowsPrePatchDocument
+          WINDOWS_PATCH_DOC: !Ref WindowsPatchDocument
+          WINDOWS_POST_PATCH_DOC: !Ref WindowsPostPatchDocument
+          LINUX_PRE_PATCH_DOC: !Ref LinuxPrePatchDocument
+          LINUX_PATCH_DOC: !Ref LinuxPatchDocument
+          LINUX_POST_PATCH_DOC: !Ref LinuxPostPatchDocument
 
   PostEC2VerifyFunction:
     Type: AWS::Lambda::Function
@@ -457,7 +368,7 @@ Resources:
       FunctionName: !Sub '${NamePrefix}-${Environment}-PostEC2Verify'
       Runtime: python3.11
       Handler: PostEC2Verify.handler
-      Role: !GetAtt PostEC2VerifyRole.Arn
+      Role: !GetAtt UnifiedExecutionRole.Arn
       Code:
         S3Bucket: !Ref LambdaArtifactBucket
         S3Key: !Ref LambdaArtifactKey
@@ -470,152 +381,10 @@ Resources:
           ENVIRONMENT: !Ref Environment
           S3_BUCKET: !Ref SnapshotsBucket
           DDB_TABLE: !Ref PatchRunsTable
-
-  SendApprovalRequestFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${NamePrefix}-${Environment}-SendApprovalRequest'
-      Runtime: python3.11
-      Handler: SendApprovalRequest.handler
-      Role: !GetAtt SendApprovalRequestRole.Arn
-      Code:
-        S3Bucket: !Ref LambdaArtifactBucket
-        S3Key: !Ref LambdaArtifactKey
-      MemorySize: 512
-      Timeout: 60
-      Environment:
-        Variables:
-          TOPIC_ARN: !Ref ApprovalTopic
-          APPROVAL_SIGNING_SECRET_ARN: !Ref ApprovalSigningSecret
-          APIGW_BASE: !Sub 'https://${ApprovalApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
-
-  ApprovalCallbackFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${NamePrefix}-${Environment}-ApprovalCallback'
-      Runtime: python3.11
-      Handler: ApprovalCallback.handler
-      Role: !GetAtt ApprovalCallbackRole.Arn
-      Code:
-        S3Bucket: !Ref LambdaArtifactBucket
-        S3Key: !Ref LambdaArtifactKey
-      MemorySize: 512
-      Timeout: 60
-      Environment:
-        Variables:
-          AUDIT_TABLE: !Ref ApprovalAuditTable
-          NOTIFICATION_TOPIC_ARN: !Ref ApprovalTopic
-          APPROVAL_EXPIRY_MINUTES: '60'
-
-  ApprovalAuthorizerFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${NamePrefix}-${Environment}-ApprovalAuthorizer'
-      Runtime: python3.11
-      Handler: ApprovalAuthorizer.handler
-      Role: !GetAtt ApprovalAuthorizerRole.Arn
-      Code:
-        S3Bucket: !Ref LambdaArtifactBucket
-        S3Key: !Ref LambdaArtifactKey
-      MemorySize: 256
-      Timeout: 10
-      Environment:
-        Variables:
-          APPROVAL_SIGNING_SECRET_ARN: !Ref ApprovalSigningSecret
-
-  # HTTP API with Lambda authorizer
-  ApprovalApi:
-    Type: AWS::ApiGatewayV2::Api
-    Properties:
-      Name: !Sub '${NamePrefix}-${Environment}-approval-api'
-      ProtocolType: HTTP
-      CorsConfiguration:
-        AllowOrigins: ['*']
-        AllowMethods: ['GET']
-
-  ApprovalApiStage:
-    Type: AWS::ApiGatewayV2::Stage
-    Properties:
-      ApiId: !Ref ApprovalApi
-      StageName: !Ref Environment
-      AutoDeploy: true
-
-  ApprovalAuthorizer:
-    Type: AWS::ApiGatewayV2::Authorizer
-    Properties:
-      ApiId: !Ref ApprovalApi
-      AuthorizerType: REQUEST
-      Name: ApprovalAuth
-      AuthorizerPayloadFormatVersion: '2.0'
-      IdentitySource:
-        - '$request.querystring.sig'
-        - '$request.querystring.timestamp'
-        - '$request.querystring.token'
-        - '$request.querystring.action'
-        - '$request.querystring.executionId'
-      AuthorizerUri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApprovalAuthorizerFunction.Arn}/invocations'
-
-  CallbackIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref ApprovalApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApprovalCallbackFunction.Arn}/invocations'
-      PayloadFormatVersion: '2.0'
-
-  CallbackRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref ApprovalApi
-      RouteKey: 'GET /callback'
-      Target: !Sub 'integrations/${CallbackIntegration}'
-      AuthorizationType: CUSTOM
-      AuthorizerId: !Ref ApprovalAuthorizer
-
-  CallbackLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref ApprovalCallbackFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApprovalApi}/*/*/callback'
-
-  AuthorizerLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref ApprovalAuthorizerFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApprovalApi}/*/*/*'
-
-  OrchestratorStateMachineRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: { Service: states.amazonaws.com }
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: OrchestratorInvoke
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: [ lambda:InvokeFunction ]
-                Resource:
-                  - !GetAtt PreEC2InventoryFunction.Arn
-                  - !GetAtt PollSsmCommandFunction.Arn
-                  - !GetAtt SendSsmCommandFunction.Arn
-                  - !GetAtt PostEC2VerifyFunction.Arn
-                  - !GetAtt SendApprovalRequestFunction.Arn
-              - Effect: Allow
-                Action: [ sns:Publish ]
-                Resource: !Ref ApprovalTopic
-              - Effect: Allow
-                Action: [ logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents ]
-                Resource: '*'
+          SNS_TOPIC_ARN: !If 
+            - HasNotificationEmail
+            - !Ref NotificationTopic
+            - ''
 
   OrchestratorLogGroup:
     Type: AWS::Logs::LogGroup
@@ -627,7 +396,7 @@ Resources:
     Type: AWS::StepFunctions::StateMachine
     Properties:
       StateMachineName: !Sub '${NamePrefix}-${Environment}-orchestrator'
-      RoleArn: !GetAtt OrchestratorStateMachineRole.Arn
+      RoleArn: !GetAtt UnifiedExecutionRole.Arn
       LoggingConfiguration:
         Destinations:
           - CloudWatchLogsLogGroup:
@@ -635,38 +404,14 @@ Resources:
         IncludeExecutionData: true
         Level: ALL
       Definition:
-        Comment: EC2 Patching Orchestrator (CFN)
-        StartAt: ManualApproval
+        Comment: EC2 Patching Orchestrator (CFN) - Simplified without approval
+        StartAt: Waves
         States:
-          ManualApproval:
-            Type: Task
-            Resource: arn:aws:states:::lambda:invoke.waitForTaskToken
-            TimeoutSeconds: !Ref ApprovalTimeoutSeconds
-            Parameters:
-              FunctionName: !Ref SendApprovalRequestFunction
-              Payload:
-                taskToken.$: '$$.Task.Token'
-                subject: 'EC2 Patching Approval Required'
-                details.$: '$'
-                executionId.$: '$$.Execution.Id'
-                estimatedDuration: 90
-            Catch:
-              - ErrorEquals: [ States.Timeout ]
-                ResultPath: $.error
-                Next: NotifyTimeout
-              - ErrorEquals: [ States.ALL ]
-                ResultPath: $.error
-                Next: NotifyFailure
-            Next: Waves
           Waves:
             Type: Map
             ItemsPath: $.accountWaves
             MaxConcurrency: !Ref WaveMaxConcurrency
             End: true
-            Catch:
-              - ErrorEquals: [ States.ALL ]
-                ResultPath: $.error
-                Next: NotifyFailure
             Iterator:
               StartAt: PreWave
               States:
@@ -747,7 +492,6 @@ Resources:
                                               - 'ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null || true'
                                               - 'ip addr'
                                               - 'uptime'
-                      # No direct SSM S3 output; outputs will be persisted by hub poller
                                       Next: PollPreLinux
                                       Retry:
                                         - ErrorEquals: [ States.TaskFailed ]
@@ -804,7 +548,6 @@ Resources:
                                               - 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 50 Name,Id,CPU,WS'
                                               - 'Get-Volume | Select-Object DriveLetter,FileSystemLabel,FileSystem,Size,SizeRemaining'
                                               - 'Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess -First 100'
-                      # No direct SSM S3 output; outputs will be persisted by hub poller
                                       Next: PollPreWindows
                                       Retry:
                                         - ErrorEquals: [ States.TaskFailed ]
@@ -834,8 +577,132 @@ Resources:
                                     SkipPreWindowsPoll:
                                       Type: Pass
                                       End: true
+                              Next: CustomPrePatch
+                            CustomPrePatch:
+                              Type: Choice
+                              Choices:
+                                - Variable: '$$.Execution.Input.useCustomDocuments'
+                                  BooleanEquals: true
+                                  Next: RunCustomPrePatch
+                              Default: SendSSM
+                            RunCustomPrePatch:
+                              Type: Parallel
+                              Catch:
+                                - ErrorEquals: [ States.ALL ]
+                                  ResultPath: $.custom_prepatch_error
+                                  Next: SendSSM
+                              Branches:
+                                - StartAt: CustomPrePatchWindows
+                                  States:
+                                    CustomPrePatchWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_pre_windows
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.windowsPrePatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Windows']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-pre/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPreWindows
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.custom_pre_windows_error
+                                          Next: SkipCustomPreWindowsPoll
+                                    PollCustomPreWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_pre_windows
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_pre_windows.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-pre/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipCustomPreWindowsPoll:
+                                      Type: Pass
+                                      End: true
+                                - StartAt: CustomPrePatchLinux
+                                  States:
+                                    CustomPrePatchLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_pre_linux
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.linuxPrePatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Linux']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-pre/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPreLinux
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.custom_pre_linux_error
+                                          Next: SkipCustomPreLinuxPoll
+                                    PollCustomPreLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_pre_linux
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_pre_linux.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-pre/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipCustomPreLinuxPoll:
+                                      Type: Pass
+                                      End: true
                               Next: SendSSM
                             SendSSM:
+                              Type: Choice
+                              Choices:
+                                - Variable: '$$.Execution.Input.useCustomDocuments'
+                                  BooleanEquals: true
+                                  Next: CustomPatchParallel
+                              Default: StandardPatch
+                            StandardPatch:
                               Type: Task
                               Resource: arn:aws:states:::lambda:invoke
                               ResultPath: $.ssm
@@ -859,10 +726,208 @@ Resources:
                                   IntervalSeconds: 5
                                   BackoffRate: 2.0
                                   MaxAttempts: 3
+                            CustomPatchParallel:
+                              Type: Parallel
+                              Branches:
+                                - StartAt: CustomPatchWindows
+                                  States:
+                                    CustomPatchWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_patch_windows
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.windowsPatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Windows']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-patch/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPatchWindows
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                    PollCustomPatchWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_patch_windows
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_patch_windows.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-patch/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                - StartAt: CustomPatchLinux
+                                  States:
+                                    CustomPatchLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_patch_linux
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.linuxPatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Linux']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-patch/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPatchLinux
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                    PollCustomPatchLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_patch_linux
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_patch_linux.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-patch/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                              Next: CustomPostPatch
+                            CustomPostPatch:
+                              Type: Parallel
                               Catch:
                                 - ErrorEquals: [ States.ALL ]
-                                  ResultPath: $.error
-                                  Next: NotifyFailure
+                                  ResultPath: $.custom_postpatch_error
+                                  Next: PostVerify
+                              Branches:
+                                - StartAt: CustomPostPatchWindows
+                                  States:
+                                    CustomPostPatchWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_post_windows
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.windowsPostPatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Windows']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-post/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPostWindows
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.custom_post_windows_error
+                                          Next: SkipCustomPostWindowsPoll
+                                    PollCustomPostWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_post_windows
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_post_windows.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-post/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipCustomPostWindowsPoll:
+                                      Type: Pass
+                                      End: true
+                                - StartAt: CustomPostPatchLinux
+                                  States:
+                                    CustomPostPatchLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_post_linux
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.linuxPostPatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Linux']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-post/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPostLinux
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.custom_post_linux_error
+                                          Next: SkipCustomPostLinuxPoll
+                                    PollCustomPostLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_post_linux
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunction
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_post_linux.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-post/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipCustomPostLinuxPoll:
+                                      Type: Pass
+                                      End: true
+                              Next: PostVerify
                             MonitorSSM:
                               Type: Task
                               Resource: arn:aws:states:::lambda:invoke
@@ -880,12 +945,8 @@ Resources:
                                   IntervalSeconds: 5
                                   BackoffRate: 2.0
                                   MaxAttempts: 3
-                              Catch:
-                                - ErrorEquals: [ States.ALL ]
-                                  ResultPath: $.error
-                                  Next: NotifyFailure
                               Next: PollComplete?
-                            PollComplete:
+                            PollComplete?:
                               Type: Choice
                               Choices:
                                 - Variable: '$.poll.Payload.should_continue_polling'
@@ -908,10 +969,6 @@ Resources:
                                   IntervalSeconds: 5
                                   BackoffRate: 2.0
                                   MaxAttempts: 3
-                              Catch:
-                                - ErrorEquals: [ States.ALL ]
-                                  ResultPath: $.error
-                                  Next: NotifyFailure
                               Next: EvaluateIssues
                             EvaluateIssues:
                               Type: Choice
@@ -929,22 +986,9 @@ Resources:
                               Type: Fail
                               Error: IssuesDetected
                               Cause: AbortOnIssues flag enabled and issues detected in region
-          NotifyFailure:
-            Type: Task
-            Resource: arn:aws:states:::sns:publish
-            Parameters:
-              TopicArn: !Ref ApprovalTopic
-              Subject: 'EC2 Patching Failure Notification'
-              Message.$: 'States.JsonToString($.error)'
-            End: true
-          NotifyTimeout:
-            Type: Task
-            Resource: arn:aws:states:::sns:publish
-            Parameters:
-              TopicArn: !Ref ApprovalTopic
-              Subject: 'EC2 Patching Approval Timed Out'
-              Message: 'Approval window expired without decision.'
-            End: true
+                        End: true
+                    End: true
+                  End: true
 
   # Basic alarm on failed executions
   StateMachineFailedAlarm:
@@ -963,8 +1007,94 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref ApprovalTopic
+      AlarmActions: !If 
+        - HasNotificationEmail
+        - - !Ref NotificationTopic
+        - !Ref AWS::NoValue
+      OKActions: !If 
+        - HasNotificationEmail
+        - - !Ref NotificationTopic
+        - !Ref AWS::NoValue
+
+  # Alarm for Lambda function errors
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${NamePrefix}-${Environment}-lambda-errors'
+      AlarmDescription: 'Alarm when Lambda functions have errors'
+      MetricName: 'Errors'
+      Namespace: 'AWS/Lambda'
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If 
+        - HasNotificationEmail
+        - - !Ref NotificationTopic
+        - !Ref AWS::NoValue
+
+  # Alarm for high patch failure rate
+  PatchFailureRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${NamePrefix}-${Environment}-patch-failure-rate'
+      AlarmDescription: 'Alarm when patch success rate drops below 80%'
+      MetricName: 'SuccessRate'
+      Namespace: 'EC2Patching/Orchestrator'
+      Statistic: Average
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 80
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If 
+        - HasNotificationEmail
+        - - !Ref NotificationTopic
+        - !Ref AWS::NoValue
+
+  # EventBridge Rule to trigger the orchestrator
+  OrchestratorScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${NamePrefix}-${Environment}-patch-schedule'
+      Description: 'Scheduled trigger for EC2 patching orchestrator'
+      State: !Ref EnableScheduledExecution
+      ScheduleExpression: !Ref PatchingSchedule
+      Targets:
+        - Id: 'OrchestratorTarget'
+          Arn: !Ref OrchestratorStateMachine
+          RoleArn: !GetAtt UnifiedExecutionRole.Arn
+          Input: !Sub |
+            {
+              "comment": "Scheduled patching execution from EventBridge",
+              "executionName": "scheduled-${Environment}",
+              "accountWaves": [
+                {
+                  "name": "wave-1",
+                  "accounts": ["${AWS::AccountId}"],
+                  "regions": ["${AWS::Region}"]
+                }
+              ],
+              "ec2": {
+                "tagKey": "PatchGroup",
+                "tagValue": "${DefaultPatchGroup}"
+              },
+              "preCollect": {
+                "enabled": true
+              },
+              "useCustomDocuments": ${CustomSsmDocuments},
+              "customDocuments": {
+                "windowsPrePatch": "${WindowsPrePatchDocument}",
+                "windowsPatch": "${WindowsPatchDocument}",
+                "windowsPostPatch": "${WindowsPostPatchDocument}",
+                "linuxPrePatch": "${LinuxPrePatchDocument}",
+                "linuxPatch": "${LinuxPatchDocument}",
+                "linuxPostPatch": "${LinuxPostPatchDocument}"
+              },
+              "abortOnIssues": true
+            }
 
   OrchestratorDashboard:
     Type: AWS::CloudWatch::Dashboard
@@ -1004,21 +1134,6 @@ Resources:
                   "period": 300,
                   "metrics": [
                     ["AWS/States","ExecutionTime","StateMachineArn","${OrchestratorStateMachine}"]
-                  ]
-                }
-              },
-              {
-                "type": "metric",
-                "x": 12, "y": 6, "width": 12, "height": 6,
-                "properties": {
-                  "title": "API (HTTP API): 4xx/5xx",
-                  "region": "${AWS::Region}",
-                  "view": "timeSeries",
-                  "stat": "Sum",
-                  "period": 300,
-                  "metrics": [
-                    ["AWS/ApiGateway","4xx","ApiId","${ApprovalApi}","Stage","${Environment}"],
-                    ["AWS/ApiGateway","5xx","ApiId","${ApprovalApi}","Stage","${Environment}"]
                   ]
                 }
               },
@@ -1171,10 +1286,6 @@ Resources:
         - { FailedAlarmArn: !GetAtt StateMachineFailedAlarm.Arn }
 
 Outputs:
-  ApiUrl:
-    Value: !Sub 'https://${ApprovalApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
-  ApprovalTopicArn:
-    Value: !Ref ApprovalTopic
   PatchRunsTableName:
     Value: !Ref PatchRunsTable
   SnapshotsBucketName:
@@ -1184,3 +1295,7 @@ Outputs:
   DashboardName:
     Description: CloudWatch dashboard for the orchestrator
     Value: !Ref OrchestratorDashboard
+  NotificationTopicArn:
+    Condition: HasNotificationEmail
+    Description: SNS topic ARN for patching notifications
+    Value: !Ref NotificationTopic

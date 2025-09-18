@@ -1,35 +1,25 @@
 {
-  "waves": [
+  "comment": "Multi-wave staggered patching execution",
+  "executionName": "multi-wave-staggered",
+  "accountWaves": [
     {
-      "name": "canary",
+      "name": "canary-wave",
       "accounts": ["111111111111"],
-      "regions": ["us-east-1"],
-      "filters": {
-        "tags": { "PatchGroup": ["default"] },
-        "platforms": ["Linux", "Windows"]
-      },
-      "ssm": {
-        "maxConcurrency": "10%",
-        "maxErrors": "1",
-        "operation": "Install",
-        "rebootOption": "RebootIfNeeded"
-      }
+      "regions": ["us-east-1"]
     },
     {
-      "name": "main",
+      "name": "main-wave",
       "accounts": ["222222222222", "333333333333"],
-      "regions": ["us-east-1", "us-west-2"],
-      "filters": {
-        "tags": { "PatchGroup": ["default"] },
-        "platforms": ["Linux", "Windows"]
-      },
-      "ssm": {
-        "maxConcurrency": "20%",
-        "maxErrors": "2%",
-        "operation": "Install",
-        "rebootOption": "RebootIfNeeded"
-      }
+      "regions": ["us-east-1", "us-west-2"]
     }
   ],
-  "wavePauseSeconds": 900
+  "ec2": {
+    "tagKey": "PatchGroup",
+    "tagValue": "default"
+  },
+  "preCollect": {
+    "enabled": true
+  },
+  "useCustomDocuments": false,
+  "abortOnIssues": true
 }

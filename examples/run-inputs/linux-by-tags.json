@@ -1,19 +1,20 @@
 {
-  "waves": [
+  "comment": "Linux instances by specific tag criteria",
+  "executionName": "linux-by-tags",
+  "accountWaves": [
     {
-      "name": "linux-prod-webapp",
+      "name": "linux-prod-webapp-wave",
       "accounts": ["111111111111"],
-      "regions": ["us-east-1"],
-      "filters": {
-        "tags": { "Environment": ["production"], "Tier": ["web", "app"] },
-        "platforms": ["Linux"]
-      },
-      "ssm": {
-        "maxConcurrency": "10%",
-        "maxErrors": "1%",
-        "operation": "Install",
-        "rebootOption": "NoReboot"
-      }
+      "regions": ["us-east-1"]
     }
-  ]
+  ],
+  "ec2": {
+    "tagKey": "PatchGroup",
+    "tagValue": "linux-prod"
+  },
+  "preCollect": {
+    "enabled": true
+  },
+  "useCustomDocuments": false,
+  "abortOnIssues": false
 }

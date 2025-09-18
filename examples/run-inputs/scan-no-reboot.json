@@ -1,19 +1,20 @@
 {
-  "waves": [
+  "comment": "Scan-only operation without reboots",
+  "executionName": "scan-no-reboot",
+  "accountWaves": [
     {
-      "name": "scan-only",
+      "name": "scan-only-wave",
       "accounts": ["111111111111"],
-      "regions": ["us-east-1"],
-      "filters": {
-        "tags": { "PatchGroup": ["default"] },
-        "platforms": ["Linux", "Windows"]
-      },
-      "ssm": {
-        "maxConcurrency": "10%",
-        "maxErrors": "1",
-        "operation": "Scan",
-        "rebootOption": "NoReboot"
-      }
+      "regions": ["us-east-1"]
     }
-  ]
+  ],
+  "ec2": {
+    "tagKey": "PatchGroup",
+    "tagValue": "default"
+  },
+  "preCollect": {
+    "enabled": false
+  },
+  "useCustomDocuments": false,
+  "abortOnIssues": false
 }

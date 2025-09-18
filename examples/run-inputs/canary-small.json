@@ -1,19 +1,20 @@
 {
-  "waves": [
+  "comment": "Canary test with small instance set",
+  "executionName": "canary-small",
+  "accountWaves": [
     {
-      "name": "canary",
+      "name": "canary-wave",
       "accounts": ["111111111111"],
-      "regions": ["us-east-1"],
-      "filters": {
-        "tags": { "PatchGroup": ["default"] },
-        "platforms": ["Linux", "Windows"]
-      },
-      "ssm": {
-        "maxConcurrency": "10%",
-        "maxErrors": "1",
-        "operation": "Install",
-        "rebootOption": "RebootIfNeeded"
-      }
+      "regions": ["us-east-1"]
     }
-  ]
+  ],
+  "ec2": {
+    "tagKey": "PatchGroup",
+    "tagValue": "default"
+  },
+  "preCollect": {
+    "enabled": true
+  },
+  "useCustomDocuments": false,
+  "abortOnIssues": true
 }

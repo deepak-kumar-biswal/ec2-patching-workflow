@@ -1,0 +1,28 @@
+{
+  "comment": "EC2 Patching with Custom SSM Documents",
+  "executionName": "custom-docs-example",
+  "accountWaves": [
+    {
+      "name": "wave-1-prod",
+      "accounts": ["123456789012", "234567890123"],
+      "regions": ["us-east-1", "us-west-2"]
+    }
+  ],
+  "ec2": {
+    "tagKey": "PatchGroup",
+    "tagValue": "prod-servers"
+  },
+  "preCollect": {
+    "enabled": true
+  },
+  "useCustomDocuments": true,
+  "customDocuments": {
+    "windowsPrePatch": "WindowsPrePatch",
+    "windowsPatch": "WindowsPatch", 
+    "windowsPostPatch": "WindowsPostPatch",
+    "linuxPrePatch": "LinuxPrePatch",
+    "linuxPatch": "LinuxPatch",
+    "linuxPostPatch": "LinuxPostPatch"
+  },
+  "abortOnIssues": true
+}

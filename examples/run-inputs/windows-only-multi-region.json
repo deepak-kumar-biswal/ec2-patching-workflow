@@ -1,19 +1,20 @@
 {
-  "waves": [
+  "comment": "Windows-only patching across multiple regions",
+  "executionName": "windows-multi-region",
+  "accountWaves": [
     {
-      "name": "windows-regional",
+      "name": "windows-regional-wave",
       "accounts": ["111111111111", "222222222222"],
-      "regions": ["us-east-1", "us-west-2"],
-      "filters": {
-        "tags": { "PatchGroup": ["default", "win"] },
-        "platforms": ["Windows"]
-      },
-      "ssm": {
-        "maxConcurrency": "5%",
-        "maxErrors": "2",
-        "operation": "Install",
-        "rebootOption": "RebootIfNeeded"
-      }
+      "regions": ["us-east-1", "us-west-2"]
     }
-  ]
+  ],
+  "ec2": {
+    "tagKey": "PatchGroup", 
+    "tagValue": "win"
+  },
+  "preCollect": {
+    "enabled": true
+  },
+  "useCustomDocuments": false,
+  "abortOnIssues": false
 }

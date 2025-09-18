@@ -1,6 +1,14 @@
 """
-Generate an AWS architecture diagram using mingrammer/diagrams.
+Generate an AWS architecture diagram for the Simplified EC2 Patching Orchestrator.
 Prereqs: Graphviz installed and on PATH; pip install diagrams.
+
+Key Simplifications:
+- No manual approval workflow
+- Single unified IAM role
+- EventBridge scheduled automation  
+- Direct execution flow
+- Optional SNS notifications for operational visibility
+- Support for custom SSM documents (Windows/Linux pre/patch/post)
 """
 
 import sys
@@ -8,7 +16,7 @@ import sys
 from diagrams import Cluster, Diagram, Edge
 from diagrams.aws.compute import EC2, Lambda
 from diagrams.aws.database import Dynamodb
-from diagrams.aws.integration import Eventbridge, SNS, StepFunctions
+from diagrams.aws.integration import Eventbridge, StepFunctions, SNS
 from diagrams.aws.management import Cloudformation, Cloudwatch
 from diagrams.aws.security import IAM, KMS
 from diagrams.aws.storage import S3
@@ -17,17 +25,8 @@ try:
 except Exception:  # fallback
     TextNode = Lambda  # type: ignore
 
-# APIGateway import path can vary by diagrams version; add a fallback.
-try:  # diagrams >= 0.20
-    from diagrams.aws.network import APIGateway as APIIcon  # type: ignore
-except Exception:  # pragma: no cover - fallback to a generic icon
-    try:
-        from diagrams.aws.general import Client as APIIcon  # type: ignore
-    except Exception:  # last resort
-        APIIcon = Lambda  # type: ignore
 
-
-DIAGRAM_TITLE = "EC2 Patching Orchestrator (Hub-and-Spoke)"
+DIAGRAM_TITLE = "EC2 Patching Orchestrator (Simplified Hub-and-Spoke)"
 FILENAME = "architecture"
 
 # Layout and style
@@ -56,30 +55,29 @@ def render(outfmt: str = "png") -> None:
         edge_attr=EDGE_ATTR,
     ):
         # Hub
-        with Cluster("Hub Account (Control Plane)"):
+        with Cluster("Hub Account (Simplified Control Plane)"):
             with Cluster("Orchestration"):
-                eb = Eventbridge("Schedule / Trigger")
-                sfn = StepFunctions("State Machine\nWaves → Accounts → Regions")
+                eb = Eventbridge("EventBridge\nScheduled Trigger")
+                sfn = StepFunctions("State Machine\nDirect Execution")
 
-            with Cluster("Patching Lambdas"):
+            with Cluster("Core Lambdas (4 Functions)"):
                 inv = Lambda("PreEC2Inventory")
                 send = Lambda("SendSsmCommand")
                 poll = Lambda("PollSsmCommand")
                 post = Lambda("PostEC2Verify")
 
-            with Cluster("Approval Flow"):
-                api = APIIcon("Approvals API")
-                authorizer = Lambda("ApprovalAuthorizer")
-                approval = Lambda("ApprovalCallback")
-                rejected = Lambda("Rejected")
+            with Cluster("Unified Security"):
+                iam_unified = IAM("UnifiedExecutionRole\n(Single IAM Role)")
 
             with Cluster("Data & Storage"):
                 ddb = Dynamodb("Execution State\n(TTL / PITR)")
                 s3 = S3("Artifacts & Outputs\n(SSE-KMS)")
 
-            with Cluster("Notifications & Observability"):
-                sns = SNS("Notifications")
+            with Cluster("Observability"):
                 cw = Cloudwatch("Dashboards & Alarms")
+
+            with Cluster("Notifications"):
+                sns = SNS("SNS Topic\n(Optional Email)")
 
             with Cluster("Security & Keys"):
                 kms = KMS("KMS Keys")
@@ -87,23 +85,26 @@ def render(outfmt: str = "png") -> None:
             with Cluster("Deployment"):
                 cf = Cloudformation("CFN-Only Deployments")
 
-            # Hub flows
+            with Cluster("Custom SSM Documents (Optional)"):
+                with Cluster("Windows Documents"):
+                    win_pre = TextNode("WindowsPrePatch")
+                    win_patch = TextNode("WindowsPatch")
+                    win_post = TextNode("WindowsPostPatch")
+                with Cluster("Linux Documents"):
+                    lin_pre = TextNode("LinuxPrePatch")
+                    lin_patch = TextNode("LinuxPatch")
+                    lin_post = TextNode("LinuxPostPatch")
+
+            # Simplified hub flows
             eb >> sfn
             sfn >> inv
             sfn >> send
             sfn >> poll
             sfn >> post
-            sfn >> sns
 
-            # API Gateway Authorizer: green allow, red reject
-            authorizer_allow = Edge(color="darkgreen", label="Allow", penwidth="2.0")
-            authorizer_deny = Edge(color="red", style="dashed", label="Deny")
-            api >> Edge(color="gray40", label="AuthN/AuthZ") >> authorizer
-            authorizer >> authorizer_allow >> approval
-            authorizer >> authorizer_deny >> rejected
-            approval >> sfn
-
-            for fn in [inv, send, poll, post, approval]:
+            # All Lambda functions use unified role
+            for fn in [inv, send, poll, post]:
+                iam_unified >> fn
                 fn >> ddb
 
             for fn in [send, poll, post]:
@@ -114,6 +115,21 @@ def render(outfmt: str = "png") -> None:
 
             for src in [sfn, ddb, s3]:
                 src >> cw
+
+            # CloudWatch alarms trigger SNS notifications
+            cw >> Edge(label="Alerts", color="orange") >> sns
+
+            # Lambda functions can send notifications
+            for fn in [inv, send, poll, post]:
+                fn >> Edge(label="Status", style="dotted", color="orange") >> sns
+
+            # Custom SSM Documents connections (optional workflow)
+            send >> Edge(label="PrePatch", style="dashed", color="purple") >> win_pre
+            send >> Edge(label="Patch", style="dashed", color="purple") >> win_patch
+            send >> Edge(label="PostPatch", style="dashed", color="purple") >> win_post
+            send >> Edge(label="PrePatch", style="dashed", color="purple") >> lin_pre
+            send >> Edge(label="Patch", style="dashed", color="purple") >> lin_patch
+            send >> Edge(label="PostPatch", style="dashed", color="purple") >> lin_post
 
         # Parameters & Limits section removed for a cleaner layout
 

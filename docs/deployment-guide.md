@@ -1,8 +1,14 @@
-# EC2 Patching Workflow - Deployment Guide
+# EC2 Patching Workflow - Deployment Guide (Simplified)
 
 ## Overview
 
-This guide provides step-by-step instructions for deploying the Enterprise EC2 Multi-Account Patching Platform across your AWS organization.
+This guide provides step-by-step instructions for deploying the **Simplified** Enterprise EC2 Multi-Account Patching Platform across your AWS organization. 
+
+**✨ Key Simplifications:**
+- No manual approval workflow
+- Single unified IAM role (83% reduction)
+- EventBridge scheduled automation
+- Direct execution for faster patching cycles
 
 ## Prerequisites
 
@@ -42,9 +48,15 @@ aws s3 cp lambda.zip s3://<artifact-bucket>/ec2-patch/<sha>/lambda.zip
 
 Edit `cloudformation/params/dev-hub.json` (or your env variant) to set values for:
 
+**Core Parameters:**
 - `CrossAccountExternalId`
 - `LambdaArtifactBucket`
 - `LambdaArtifactKey`
+
+**Scheduling Parameters (New):**
+- `EnableScheduledExecution` (ENABLED/DISABLED) - Controls EventBridge scheduled execution
+- `PatchingSchedule` - Cron expression for automated patching (default: Sundays at 2 AM UTC)
+- `DefaultPatchGroup` - Default EC2 tag value for PatchGroup (default: prod-servers)
 
 ### 1.3 Deploy Hub Stack
 
@@ -132,9 +144,22 @@ aws ec2 create-tags \
            Key=MaintenanceWindow,Value=sunday-2am
 ```
 
-### 4.2 Approval Callback and Notifications
+### 4.2 Configure Scheduled Execution (Optional)
 
-Ensure the approval callback API and notification email (if used) are configured via hub parameters.
+Enable EventBridge scheduled execution for hands-off patching:
+
+```bash
+# Enable scheduled execution
+aws cloudformation update-stack \
+    --stack-name ec2-patch-hub \
+    --use-previous-template \
+    --parameters ParameterKey=EnableScheduledExecution,ParameterValue=ENABLED \
+                 ParameterKey=PatchingSchedule,ParameterValue='cron(0 2 ? * SUN *)' \
+                 ParameterKey=DefaultPatchGroup,ParameterValue=prod-servers
+
+# Check EventBridge rule status
+aws events describe-rule --name ec2-patch-prod-patch-schedule
+```
 
 ### 4.3 Set Up Monitoring
 
@@ -188,9 +213,9 @@ aws stepfunctions start-execution \
 ### 6.1 Gradual Rollout Plan
 
 1. **Week 1**: Deploy to development accounts only
-2. **Week 2**: Add staging accounts with manual approval
-3. **Week 3**: Include non-critical production accounts
-4. **Week 4**: Full production rollout with all safety measures
+2. **Week 2**: Add staging accounts with scheduled execution disabled
+3. **Week 3**: Include non-critical production accounts with limited scheduling
+4. **Week 4**: Full production rollout with automated scheduling enabled
 
 ### 6.2 Rollback Plan
 

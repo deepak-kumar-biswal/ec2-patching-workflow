@@ -1,10 +1,16 @@
-# EC2 Patching Workflow - Troubleshooting Guide
+# EC2 Patching Workflow - Troubleshooting Guide (Simplified)
 
 ## Overview
 
-This guide provides comprehensive troubleshooting information for the Enterprise EC2 Multi-Account Patching Platform, including common issues, diagnostic procedures, and resolution steps.
+This guide provides comprehensive troubleshooting information for the **Simplified** Enterprise EC2 Multi-Account Patching Platform, including common issues, diagnostic procedures, and resolution steps.
 
-For day-2 operations and procedures (approvals, retries, scaling, monitoring), see the Ops Runbook: `docs/runbook-operations.md`.
+**✨ Simplified Troubleshooting:**
+- No manual approval workflow complexity
+- Single unified IAM role reduces permission issues
+- EventBridge scheduling troubleshooting included
+- Streamlined error scenarios
+
+For day-2 operations and procedures (monitoring, retries, scaling), see the Ops Runbook: `docs/runbook-operations.md`.
 
 ## Table of Contents
 
@@ -204,12 +210,7 @@ aws stepfunctions get-execution-history \
 
 **Common Causes**:
 
-1. **Waiting for Manual Approval**
-   - Check SNS notifications sent
-   - Verify approval URL accessibility
-   - Check approval timeout settings
-
-2. **Lambda Function Timeout**
+1. **Lambda Function Timeout**
    - Review CloudWatch logs for timeout errors
    - Increase function timeout if needed
    - Optimize function code
@@ -350,43 +351,6 @@ def lambda_handler(event, context):
             # Implement exponential backoff
             time.sleep(2 ** retry_count)
         raise
-```
-
-### Issue: Approval Callback Timeout
-
-**Symptoms**:
-
-```text
-Task timed out after 180.00 seconds
-```
-
-**Diagnosis**:
-
-```bash
-# Check function configuration
-aws lambda get-function-configuration \
-  --function-name ec2patch-ApprovalCallback \
-  --query '{Timeout:Timeout,MemorySize:MemorySize}'
-
-# Review CloudWatch metrics
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/Lambda \
-  --metric-name Duration \
-  --dimensions Name=FunctionName,Value=ec2patch-ApprovalCallback \
-  --start-time $(date -d "1 hour ago" --iso-8601) \
-  --end-time $(date --iso-8601) \
-  --period 300 \
-  --statistics Average,Maximum
-```
-
-**Resolution**:
-
-```bash
-# Increase timeout and memory
-aws lambda update-function-configuration \
-  --function-name ec2patch-ApprovalCallback \
-  --timeout 300 \
-  --memory-size 512
 ```
 
 ## Systems Manager Issues

@@ -1,8 +1,14 @@
-# EC2 Patching Workflow - API Reference
+# EC2 Patching Workflow - API Reference (Simplified)
 
 ## Overview
 
-This document provides comprehensive API reference for the Enterprise EC2 Multi-Account Patching Platform, including Step Functions, Lambda functions, and integration APIs.
+This document provides comprehensive API reference for the **Simplified** Enterprise EC2 Multi-Account Patching Platform, including Step Functions, Lambda functions, and EventBridge integration.
+
+**✨ Simplified Features:**
+- Direct execution (no manual approval workflow)
+- Single unified IAM role
+- EventBridge scheduled automation
+- Streamlined parameter set
 
 ## Table of Contents
 
@@ -33,9 +39,7 @@ aws stepfunctions start-execution \
     "tagFilters": {
       "key": "value"
     },
-    "instanceIds": ["string"],
-    "approvalRequired": boolean,
-    "notificationEmail": "string"
+    "instanceIds": ["string"]
   }'
 ```
 
@@ -49,8 +53,6 @@ aws stepfunctions start-execution \
 | `regions` | array | Yes | List of AWS regions to patch |
 | `tagFilters` | object | No | EC2 instance tag filters |
 | `instanceIds` | array | No | Specific instance IDs to patch |
-| `approvalRequired` | boolean | No | Require manual approval (default: true) |
-| `notificationEmail` | string | No | Override default notification email |
 
 **Response**:
 
@@ -140,62 +142,6 @@ aws stepfunctions stop-execution \
     "eligibleInstances": 1,
     "excludedInstances": 0
   }
-}
-```
-
-### SendApprovalRequest
-
-**Purpose**: Initiate manual approval workflow
-
-**Input**:
-
-```json
-{
-  "executionName": "patch-execution-12345",
-  "instances": [
-    {
-      "instanceId": "i-1234567890abcdef0",
-      "accountId": "111111111111",
-      "region": "us-east-1"
-    }
-  ],
-  "approvers": ["ops-team@company.com"],
-  "timeoutMinutes": 60
-}
-```
-
-**Output**:
-
-```json
-{
-  "approvalToken": "approval-token-12345",
-  "snsMessageId": "12345678-1234-1234-1234-123456789012",
-  "approvalUrl": "https://console.aws.amazon.com/stepfunctions/approval?token=approval-token-12345",
-  "expiresAt": "2025-08-27T11:00:00.000Z"
-}
-```
-
-
-### ApprovalCallback
-
-**Purpose**: Process approval responses
-
-**Input**:
-```json
-{
-  "approvalToken": "approval-token-12345",
-  "decision": "APPROVED|REJECTED",
-  "comments": "Approved for emergency security patch",
-  "approver": "ops-team@company.com"
-}
-```
-
-**Output**:
-```json
-{
-  "status": "success",
-  "decision": "APPROVED",
-  "processedAt": "2025-08-27T10:30:00.000Z"
 }
 ```
 
@@ -294,16 +240,29 @@ aws stepfunctions stop-execution \
 ```json
 {
   "source": ["aws.ec2patching"],
-  "detail-type": ["EC2 Patch Wave Execution"],
+  "detail-type": ["EC2 Patch Scheduled Execution"],
   "detail": {
     "waveId": ["string"],
     "accounts": ["string"],
     "regions": ["string"],
-    "scheduleExpression": ["string"]
+    "scheduleExpression": ["string"],
+    "patchGroup": ["string"]
   }
 }
 ```
 
+### Schedule Management
+
+```bash
+# Enable scheduled execution
+aws events enable-rule --name "ec2-patch-prod-patch-schedule"
+
+# Disable scheduled execution
+aws events disable-rule --name "ec2-patch-prod-patch-schedule"
+
+# Check schedule status
+aws events describe-rule --name "ec2-patch-prod-patch-schedule"
+```
 
 ### Custom Rule Creation
 
@@ -316,7 +275,7 @@ aws events put-rule \
 
 aws events put-targets \
   --rule "custom-patch-wave" \
-  --targets 'Id=1,Arn=arn:aws:states:region:account:stateMachine:ec2patch-orchestrator,Input="{\"waveId\":\"custom-dev\",\"accounts\":[\"444444444444\"],\"regions\":[\"us-east-1\"]}"'
+  --targets 'Id=1,Arn=arn:aws:states:region:account:stateMachine:ec2patch-orchestrator,RoleArn=arn:aws:iam::account:role/UnifiedExecutionRole,Input="{\"accountWaves\":[{\"name\":\"custom-dev\",\"accounts\":[\"444444444444\"],\"regions\":[\"us-east-1\"]}],\"ec2\":{\"tagKey\":\"PatchGroup\",\"tagValue\":\"dev-servers\"}}"'
 ```
 
 ## Systems Manager Integration

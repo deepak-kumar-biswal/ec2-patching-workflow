@@ -4,10 +4,18 @@
   "LogRetentionDays": 30,
   "SsmMaxConcurrency": "15%",
   "SsmMaxErrors": "1",
-  "ApprovalTimeoutSeconds": 3600,
-  "ApprovalEmail": "",
-  "ApprovalSigningSecretString": "",
   "CrossAccountExternalId": "CHANGE-ME-EXTERNAL-ID",
   "LambdaArtifactBucket": "CHANGE-ME-ARTIFACT-BUCKET",
-  "LambdaArtifactKey": "ec2-patch/CHANGE-ME/lambda.zip"
+  "LambdaArtifactKey": "ec2-patch/CHANGE-ME/lambda.zip",
+  "EnableScheduledExecution": "DISABLED",
+  "PatchingSchedule": "cron(0 3 ? * SAT *)",
+  "DefaultPatchGroup": "stage-servers",
+  "NotificationEmail": "devops-team@company.com",
+  "CustomSsmDocuments": "ENABLED",
+  "WindowsPrePatchDocument": "WindowsPrePatch",
+  "WindowsPatchDocument": "WindowsPatch",
+  "WindowsPostPatchDocument": "WindowsPostPatch",
+  "LinuxPrePatchDocument": "LinuxPrePatch",
+  "LinuxPatchDocument": "LinuxPatch",
+  "LinuxPostPatchDocument": "LinuxPostPatch"
 }

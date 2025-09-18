@@ -26,6 +26,18 @@ The output file will be `docs/diagrams/architecture.png`.
 - This is documentation-only; it does not affect runtime.
 - Icons map to resources deployed by the CFN stacks (hub/spokes).
 - If you update the architecture, please re-generate and commit the PNG.
+- **Latest Update**: Added SNS notification topic with CloudWatch alarm integration, Lambda notification flows, and custom SSM documents visualization.
+
+## Architecture Features Visualized
+
+- **Simplified Hub-Spoke**: Single IAM role, direct execution flow
+- **EventBridge Scheduling**: Automated cron-based patching triggers
+- **Core Lambda Functions**: PreEC2Inventory, SendSsmCommand, PollSsmCommand, PostEC2Verify
+- **Data Storage**: DynamoDB state tracking, S3 artifact storage
+- **Monitoring**: CloudWatch dashboards and alarms
+- **Notifications**: Optional SNS topic for alerts and status updates
+- **Custom SSM Documents**: Optional Windows/Linux pre/patch/post documents
+- **Security**: KMS encryption, cross-account role assumption
 
 ## Troubleshooting
 
