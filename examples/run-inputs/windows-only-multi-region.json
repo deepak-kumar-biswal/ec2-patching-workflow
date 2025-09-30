@@ -15,6 +15,13 @@
   "preCollect": {
     "enabled": true
   },
-  "useCustomDocuments": false,
+  "customDocuments": {
+    "windowsPrePatch": "WindowsPrePatch",
+    "windowsPatch": "WindowsPatch",
+    "windowsPostPatch": "WindowsPostPatch",
+    "linuxPrePatch": "LinuxPrePatch",
+    "linuxPatch": "LinuxPatch",
+    "linuxPostPatch": "LinuxPostPatch"
+  },
   "abortOnIssues": false
 }

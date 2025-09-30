@@ -11,7 +11,6 @@
   "PatchingSchedule": "cron(0 3 ? * SAT *)",
   "DefaultPatchGroup": "stage-servers",
   "NotificationEmail": "devops-team@company.com",
-  "CustomSsmDocuments": "ENABLED",
   "WindowsPrePatchDocument": "WindowsPrePatch",
   "WindowsPatchDocument": "WindowsPatch",
   "WindowsPostPatchDocument": "WindowsPostPatch",

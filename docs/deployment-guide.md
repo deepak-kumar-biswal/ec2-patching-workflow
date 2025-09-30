@@ -44,16 +44,31 @@ zip -r lambda.zip lambda -x "**/__pycache__/**"
 aws s3 cp lambda.zip s3://<artifact-bucket>/ec2-patch/<sha>/lambda.zip
 ```
 
+### 1.1.1 Package nested templates (required)
+
+Nested templates under `cloudformation/nested/` are referenced via TemplateURL. Package the root template so the CLI uploads nested templates to S3 and rewrites TemplateURLs automatically.
+
+```bash
+# This produces a packaged template with S3 URLs for all nested TemplateURL references
+aws cloudformation package \
+    --template-file cloudformation/hub-cfn.yaml \
+    --s3-bucket <artifact-bucket> \
+    --s3-prefix ec2-patch/<sha>/nested \
+    --output-template-file cloudformation/hub-cfn.packaged.yaml
+```
+
 ### 1.2 Configure Parameters
 
 Edit `cloudformation/params/dev-hub.json` (or your env variant) to set values for:
 
 **Core Parameters:**
+
 - `CrossAccountExternalId`
 - `LambdaArtifactBucket`
 - `LambdaArtifactKey`
 
 **Scheduling Parameters (New):**
+
 - `EnableScheduledExecution` (ENABLED/DISABLED) - Controls EventBridge scheduled execution
 - `PatchingSchedule` - Cron expression for automated patching (default: Sundays at 2 AM UTC)
 - `DefaultPatchGroup` - Default EC2 tag value for PatchGroup (default: prod-servers)
@@ -62,7 +77,7 @@ Edit `cloudformation/params/dev-hub.json` (or your env variant) to set values fo
 
 ```bash
 aws cloudformation deploy \
-    --template-file cloudformation/hub-cfn.yaml \
+    --template-file cloudformation/hub-cfn.packaged.yaml \
     --stack-name ec2-patch-hub \
     --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides file://cloudformation/params/dev-hub.json

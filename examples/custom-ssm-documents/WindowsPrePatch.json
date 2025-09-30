@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Windows Pre-Patch Operations - Service Stop and Backup",
+  "parameters": {
+    "ServiceNames": {
+      "type": "StringList",
+      "description": "List of services to stop before patching",
+      "default": ["IIS", "MSSQLSERVER", "MyCustomApp"]
+    },
+    "CreateBackup": {
+      "type": "String",
+      "description": "Create configuration backup",
+      "allowedValues": ["true", "false"],
+      "default": "true"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runPowerShellScript",  
+      "name": "StopServicesAndBackup",
+      "inputs": {
+        "timeoutSeconds": "600",
+        "runCommand": [
+          "# Windows Pre-Patch Script",
+          "Write-Output 'Starting pre-patch operations...'",
+          "",
+          "# Stop specified services",
+          "$services = '{{ ServiceNames }}'.Split(',') | ForEach-Object { $_.Trim() }",
+          "foreach ($service in $services) {",
+          "    if (Get-Service -Name $service -ErrorAction SilentlyContinue) {",
+          "        Write-Output \"Stopping service: $service\"",
+          "        Stop-Service -Name $service -Force",
+          "    }",
+          "}",
+          "",
+          "# Create backup if requested",
+          "if ('{{ CreateBackup }}' -eq 'true') {",
+          "    $backupPath = \"C:\\PrePatchBackup\\$(Get-Date -Format 'yyyyMMdd-HHmmss')\"",
+          "    New-Item -Path $backupPath -ItemType Directory -Force",
+          "    ",
+          "    # Export registry keys",
+          "    reg export 'HKEY_LOCAL_MACHINE\\SOFTWARE' \"$backupPath\\software.reg\"",
+          "    ",
+          "    # Backup IIS config if exists",
+          "    if (Test-Path 'C:\\Windows\\System32\\inetsrv\\config') {",
+          "        Copy-Item 'C:\\Windows\\System32\\inetsrv\\config' \"$backupPath\\iis_config\" -Recurse",
+          "    }",
+          "    ",
+          "    Write-Output \"Backup created at: $backupPath\"",
+          "}",
+          "",
+          "Write-Output 'Pre-patch operations completed'"
+        ]
+      }
+    }
+  ]
+}

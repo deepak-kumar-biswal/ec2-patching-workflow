@@ -1,0 +1,109 @@
+{
+  "Parameters": [
+    {
+      "ParameterKey": "NamePrefix",
+      "ParameterValue": "ec2-patch"
+    },
+    {
+      "ParameterKey": "Environment",
+      "ParameterValue": "prod"
+    },
+    {
+      "ParameterKey": "WaveMaxConcurrency",
+      "ParameterValue": "2"
+    },
+    {
+      "ParameterKey": "AccountMaxConcurrency", 
+      "ParameterValue": "5"
+    },
+    {
+      "ParameterKey": "RegionMaxConcurrency",
+      "ParameterValue": "3"
+    },
+    {
+      "ParameterKey": "SsmMaxConcurrency",
+      "ParameterValue": "10%"
+    },
+    {
+      "ParameterKey": "SsmMaxErrors",
+      "ParameterValue": "1"
+    },
+    {
+      "ParameterKey": "LogRetentionDays",
+      "ParameterValue": "30"
+    },
+    {
+      "ParameterKey": "CrossAccountExternalId",
+      "ParameterValue": "my-secure-external-id-12345"
+    },
+    {
+      "ParameterKey": "LambdaArtifactBucket",
+      "ParameterValue": "my-lambda-artifacts-bucket"
+    },
+    {
+      "ParameterKey": "LambdaArtifactKey",
+      "ParameterValue": "ec2-patching-lambdas.zip"
+    },
+    {
+      "ParameterKey": "ReservedConcSend",
+      "ParameterValue": "10"
+    },
+    {
+      "ParameterKey": "ReservedConcPoll",
+      "ParameterValue": "20"
+    },
+    {
+      "ParameterKey": "ReservedConcInventory",
+      "ParameterValue": "5"
+    },
+    {
+      "ParameterKey": "ReservedConcPostVerify",
+      "ParameterValue": "5"
+    },
+    {
+      "ParameterKey": "EnableScheduledExecution",
+      "ParameterValue": "ENABLED"
+    },
+    {
+      "ParameterKey": "PatchingSchedule",
+      "ParameterValue": "cron(0 2 ? * SUN *)"
+    },
+    {
+      "ParameterKey": "DefaultPatchGroup",
+      "ParameterValue": "prod-servers"
+    },
+    {
+      "ParameterKey": "NotificationEmail",
+      "ParameterValue": "sysadmin@company.com"
+    },
+
+    {
+      "ParameterKey": "WindowsPrePatchDocument",
+      "ParameterValue": "ec2-patch-prod-WindowsCustomPatch"
+    },
+    {
+      "ParameterKey": "WindowsPatchDocument", 
+      "ParameterValue": "ec2-patch-prod-WindowsCustomPatch"
+    },
+    {
+      "ParameterKey": "WindowsPostPatchDocument",
+      "ParameterValue": "ec2-patch-prod-WindowsCustomPatch"
+    },
+    {
+      "ParameterKey": "LinuxPrePatchDocument",
+      "ParameterValue": "ec2-patch-prod-LinuxCustomPatch"
+    },
+    {
+      "ParameterKey": "LinuxPatchDocument",
+      "ParameterValue": "ec2-patch-prod-LinuxCustomPatch"
+    },
+    {
+      "ParameterKey": "LinuxPostPatchDocument",
+      "ParameterValue": "ec2-patch-prod-LinuxCustomPatch"
+    },
+    {
+      "ParameterKey": "SpokeAccountIds",
+      "ParameterValue": "222222222222,333333333333,444444444444"
+    }
+  ]
+}

@@ -11,7 +11,6 @@
   "PatchingSchedule": "cron(0 2 ? * SUN *)",
   "DefaultPatchGroup": "prod-servers",
   "NotificationEmail": "ops-team@company.com",
-  "CustomSsmDocuments": "ENABLED",
   "WindowsPrePatchDocument": "WindowsPrePatch",
   "WindowsPatchDocument": "WindowsPatch",
   "WindowsPostPatchDocument": "WindowsPostPatch",

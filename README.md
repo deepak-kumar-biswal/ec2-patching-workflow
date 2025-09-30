@@ -5,7 +5,7 @@
 - **Hub-Spoke Model**: Centralized orchestration across multiple AWS accounts
 - **Real-time Monitoring**: Comprehensive CloudWatch dashboards and metrics
 - **Smart Notifications**: Optional SNS alerts for failures and status updates (83% fewer IAM roles than complex systems)
-- **Custom SSM Documents**: Support for existing WindowsPatch/LinuxPatch and pre/post-patch documents
+- **Custom SSM Documents**: Built-in Windows/Linux pre/patch/post documents are always created and used
 - **Pre/Post Verification**: Automated system state capture and verification
 - **Flexible Targeting**: EC2 tag-based instance selection with multi-region support
 - **Error Handling**: Robust retry mechanisms and failure isolation2 Multi-Account Patching Platform (Simplified)
@@ -141,6 +141,24 @@ Rendered AWS icon diagram of the solution:
 
 To update the diagram, regenerate both SVG and PNG following `docs/diagrams/README.md` and commit the outputs.
 
+## Deploying nested stacks (important)
+
+This repository uses a root template (`cloudformation/hub-cfn.yaml`) that references several nested templates under `cloudformation/nested/` via TemplateURL. Before deploying, you must either:
+
+- Package the templates so the CLI uploads local nested templates to S3 and rewrites TemplateURL to S3 URLs; or
+- Manually upload each nested template to an S3 bucket and update TemplateURL to point at those S3 object URLs.
+
+Recommended (package):
+
+1) Package the root template to a temporary packaged file, uploading nested templates and Lambda code to your S3 artifact bucket.
+2) Deploy the packaged template as usual with `aws cloudformation deploy`.
+
+Notes
+
+- The AWS CLI package step is required when TemplateURL points to local files. Without packaging, CloudFormation cannot fetch nested templates.
+- If you prefer manual S3 hosting, upload each file under `cloudformation/nested/` to S3 and change the TemplateURL values in `hub-cfn.yaml` to their S3 URLs.
+- Lambda code must also be present in S3 and referenced by `LambdaArtifactBucket`/`LambdaArtifactKey` parameters.
+
 ## Scheduled Automation
 
 The simplified platform includes built-in EventBridge scheduling for automated patching execution:
@@ -198,19 +216,24 @@ Output: S3 artifacts + DynamoDB state tracking
 
 Optional SNS notifications provide operational visibility without complex approval workflows:
 
+ 
 ### Setup Notifications
+
 ```yaml
 # CloudFormation Parameter
 NotificationEmail: ops-team@company.com  # Leave empty to disable
 ```
 
 ### Automatic Alerts
+
 - **Step Function Failures** - Immediate execution failure alerts
 - **Lambda Errors** - Threshold-based error notifications (5+ errors in 5 min)
 - **Low Success Rate** - Alerts when patch success drops below 80%
 
 ### Custom Notifications
+
 Lambda functions can send structured notifications for:
+
 - Patching start/completion status
 - Instance count summaries  
 - Regional failure patterns
@@ -218,28 +241,26 @@ Lambda functions can send structured notifications for:
 
 See `examples/notification-examples.md` for implementation details and message formats.
 
+ 
 ## Custom SSM Documents
 
 The orchestrator supports your existing custom SSM documents for specialized patch operations:
 
-### Enable Custom Documents
-```yaml
-# CloudFormation Parameters
-CustomSsmDocuments: ENABLED
-WindowsPrePatchDocument: 'WindowsPrePatch'
-WindowsPatchDocument: 'WindowsPatch'
-WindowsPostPatchDocument: 'WindowsPostPatch'
-LinuxPrePatchDocument: 'LinuxPrePatch'
-LinuxPatchDocument: 'LinuxPatch'
-LinuxPostPatchDocument: 'LinuxPostPatch'
-```
+ 
+### Custom Documents
 
+Custom SSM documents are always enabled. You can override the pre/post document names via parameters if desired; the patch documents default to the stack-created `${NamePrefix}-${Environment}-WindowsCustomPatch` and `${NamePrefix}-${Environment}-LinuxCustomPatch`.
+
+ 
 ### Execution Flow
+
 - **Pre-Patch**: Custom preparation scripts (service stops, backups)
-- **Patch**: Your specialized patching documents (replaces AWS-RunPatchBaseline)
+- **Patch**: Custom patching documents created by the stack (replaces AWS-RunPatchBaseline)
 - **Post-Patch**: Custom cleanup and verification scripts
 
+ 
 ### Platform Targeting
+
 Documents automatically target correct OS platforms using `Platform=Windows|Linux` tags.
 
 See `docs/custom-ssm-documents.md` for complete configuration and examples.
@@ -253,7 +274,9 @@ See `docs/custom-ssm-documents.md` for complete configuration and examples.
 
 ## Simplification Summary
 
+ 
 ### Before (Complex)
+
 ```text
 ┌─ Manual Approval Workflow ─┐
 │  • SNS notifications        │
@@ -272,7 +295,9 @@ See `docs/custom-ssm-documents.md` for complete configuration and examples.
 └─────────────────────────────┘
 ```
 
+ 
 ### After (Simplified)
+
 ```text
 ┌─ Direct Execution ──────────┐
 │  • EventBridge schedules    │
@@ -342,6 +367,8 @@ Use this as a template when starting the Step Functions execution. Adjust waves,
       },
       "ssm": {
         "maxConcurrency": "10%",
+
+
         "maxErrors": "1",
         "operation": "Install",
         "rebootOption": "RebootIfNeeded"
@@ -354,8 +381,11 @@ Use this as a template when starting the Step Functions execution. Adjust waves,
 Example (AWS CLI) to pass accounts and input JSON:
 
 ```powershell
+
+
 # Save your input as run-input.json (see template above)
 aws stepfunctions start-execution \
+
   --state-machine-arn arn:aws:states:us-east-1:<HUB_ACCOUNT>:stateMachine:<NAME_PREFIX>-orchestrator \
   --name ec2patch-$(Get-Date -Format yyyyMMdd-HHmmss) \
   --input file://run-input.json

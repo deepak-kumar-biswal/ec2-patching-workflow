@@ -85,7 +85,7 @@ def render(outfmt: str = "png") -> None:
             with Cluster("Deployment"):
                 cf = Cloudformation("CFN-Only Deployments")
 
-            with Cluster("Custom SSM Documents (Optional)"):
+            with Cluster("Custom SSM Documents"):
                 with Cluster("Windows Documents"):
                     win_pre = TextNode("WindowsPrePatch")
                     win_patch = TextNode("WindowsPatch")
@@ -123,13 +123,13 @@ def render(outfmt: str = "png") -> None:
             for fn in [inv, send, poll, post]:
                 fn >> Edge(label="Status", style="dotted", color="orange") >> sns
 
-            # Custom SSM Documents connections (optional workflow)
-            send >> Edge(label="PrePatch", style="dashed", color="purple") >> win_pre
-            send >> Edge(label="Patch", style="dashed", color="purple") >> win_patch
-            send >> Edge(label="PostPatch", style="dashed", color="purple") >> win_post
-            send >> Edge(label="PrePatch", style="dashed", color="purple") >> lin_pre
-            send >> Edge(label="Patch", style="dashed", color="purple") >> lin_patch
-            send >> Edge(label="PostPatch", style="dashed", color="purple") >> lin_post
+            # Custom SSM Documents connections (default workflow)
+            send >> Edge(label="PrePatch") >> win_pre
+            send >> Edge(label="Patch") >> win_patch
+            send >> Edge(label="PostPatch") >> win_post
+            send >> Edge(label="PrePatch") >> lin_pre
+            send >> Edge(label="Patch") >> lin_patch
+            send >> Edge(label="PostPatch") >> lin_post
 
         # Parameters & Limits section removed for a cleaner layout
 
@@ -149,11 +149,11 @@ def render(outfmt: str = "png") -> None:
         for fn in [inv, send, poll, post]:
             fn >> Edge(label="AssumeRole", style="dashed", color="gray50", constraint="false") >> iam
 
-        # SSM Run Command path (conceptual)
-        send >> Edge(label="RunPatchBaseline", color="steelblue") >> ec2_win
-        send >> Edge(label="RunPatchBaseline", color="steelblue") >> ec2_lin
-        poll << Edge(label="GetResults", color="steelblue") << ec2_win
-        poll << Edge(label="GetResults", color="steelblue") << ec2_lin
+    # SSM Run Command paths to instances via custom documents
+    send >> Edge(label="RunCommand") >> ec2_win
+    send >> Edge(label="RunCommand") >> ec2_lin
+    poll << Edge(label="GetResults") << ec2_win
+    poll << Edge(label="GetResults") << ec2_lin
 
         # Legend removed for a cleaner, less cluttered SVG output
 

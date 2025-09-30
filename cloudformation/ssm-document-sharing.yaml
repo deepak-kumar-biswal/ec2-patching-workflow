@@ -1,0 +1,206 @@
+# CloudFormation snippet to add to hub-cfn.yaml
+
+# Add these parameters
+Parameters:
+  SpokeAccountIds:
+    Type: CommaDelimitedList
+    Description: List of spoke account IDs to share SSM documents with
+    Default: "222222222222,333333333333"
+
+# Add these resources
+Resources:
+  # Windows Custom Patch Document
+  WindowsCustomPatchDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      DocumentFormat: JSON
+      Name: !Sub '${NamePrefix}-${Environment}-WindowsCustomPatch'
+      Content: !Sub |
+        {
+          "schemaVersion": "2.2",
+          "description": "Custom Windows Patching Document with Pre/Post Operations",
+          "parameters": {
+            "Operation": {
+              "type": "String",
+              "description": "The update operation to perform",
+              "allowedValues": ["Install", "Scan"],
+              "default": "Install"
+            },
+            "RebootOption": {
+              "type": "String", 
+              "description": "Reboot behavior after patching",
+              "allowedValues": ["NoReboot", "RebootIfNeeded"],
+              "default": "RebootIfNeeded"
+            },
+            "ServiceNames": {
+              "type": "StringList",
+              "description": "Services to stop before patching",
+              "default": ["IIS", "MSSQLSERVER"]
+            }
+          },
+          "mainSteps": [
+            {
+              "action": "aws:runPowerShellScript",
+              "name": "CustomWindowsPatch",
+              "inputs": {
+                "timeoutSeconds": "3600",
+                "runCommand": [
+                  "# Your custom Windows patching logic here",
+                  "Write-Output 'Starting custom Windows patching...'",
+                  "# Include your full patching script"
+                ]
+              }
+            }
+          ]
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-${Environment}-WindowsCustomPatch'
+
+  # Linux Custom Patch Document  
+  LinuxCustomPatchDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      DocumentFormat: JSON
+      Name: !Sub '${NamePrefix}-${Environment}-LinuxCustomPatch'
+      Content: !Sub |
+        {
+          "schemaVersion": "2.2", 
+          "description": "Custom Linux Patching Document with Pre/Post Operations",
+          "parameters": {
+            "Operation": {
+              "type": "String",
+              "description": "The update operation to perform",
+              "allowedValues": ["Install", "Scan"],
+              "default": "Install"
+            },
+            "RebootOption": {
+              "type": "String",
+              "description": "Reboot behavior after patching", 
+              "allowedValues": ["NoReboot", "RebootIfNeeded"],
+              "default": "RebootIfNeeded"
+            },
+            "ServiceNames": {
+              "type": "StringList",
+              "description": "Services to stop before patching",
+              "default": ["httpd", "nginx"]
+            }
+          },
+          "mainSteps": [
+            {
+              "action": "aws:runShellScript",
+              "name": "CustomLinuxPatch",
+              "inputs": {
+                "timeoutSeconds": "3600",
+                "runCommand": [
+                  "#!/bin/bash",
+                  "echo 'Starting custom Linux patching...'",
+                  "# Include your full patching script"
+                ]
+              }
+            }
+          ]
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-${Environment}-LinuxCustomPatch'
+
+  # Custom Resource to Share Documents
+  ShareDocumentsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-ShareSSMDocuments'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt ShareDocumentsRole.Arn
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+              try:
+                  ssm = boto3.client('ssm')
+                  request_type = event['RequestType']
+                  
+                  if request_type in ['Create', 'Update']:
+                      document_names = event['ResourceProperties']['DocumentNames']
+                      account_ids = event['ResourceProperties']['AccountIds']
+                      
+                      for doc_name in document_names:
+                          logger.info(f"Sharing document {doc_name} with accounts {account_ids}")
+                          
+                          try:
+                              ssm.modify_document_permission(
+                                  Name=doc_name,
+                                  PermissionType='Share',
+                                  AccountIdsToAdd=account_ids
+                              )
+                              logger.info(f"Successfully shared {doc_name}")
+                          except Exception as e:
+                              logger.error(f"Failed to share {doc_name}: {str(e)}")
+                              # Don't fail the whole operation for individual document failures
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  
+              except Exception as e:
+                  logger.error(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  ShareDocumentsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ShareSSMDocuments
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:ModifyDocumentPermission
+                  - ssm:DescribeDocumentPermission
+                Resource: '*'
+
+  ShareWindowsDocument:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt ShareDocumentsFunction.Arn
+      DocumentNames:
+        - !Ref WindowsCustomPatchDocument
+      AccountIds: !Ref SpokeAccountIds
+    DependsOn: WindowsCustomPatchDocument
+
+  ShareLinuxDocument:
+    Type: AWS::CloudFormation::CustomResource  
+    Properties:
+      ServiceToken: !GetAtt ShareDocumentsFunction.Arn
+      DocumentNames:
+        - !Ref LinuxCustomPatchDocument
+      AccountIds: !Ref SpokeAccountIds
+    DependsOn: LinuxCustomPatchDocument
+
+# Update outputs
+Outputs:
+  SharedDocuments:
+    Description: Shared SSM document names
+    Value: !Join
+      - ', '
+      - - !Ref WindowsCustomPatchDocument
+        - !Ref LinuxCustomPatchDocument

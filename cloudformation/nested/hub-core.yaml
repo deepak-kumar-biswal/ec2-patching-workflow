@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Patching Orchestrator - Hub Core (KMS, S3, DDB, SNS, Unified Role)
+
+Parameters:
+  NamePrefix:
+    Type: String
+  Environment:
+    Type: String
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+  NotificationEmail:
+    Type: String
+    Default: ''
+
+Conditions:
+  HasNotificationEmail: !Not [!Equals [!Ref NotificationEmail, '']]
+
+Resources:
+  KmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub '${NamePrefix}-${Environment} KMS key for data at rest'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowRoot
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  KmsAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${NamePrefix}-${Environment}-data'
+      TargetKeyId: !Ref KmsKey
+
+  SnapshotsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref KmsKey
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionNonCurrent
+            Status: Enabled
+            NoncurrentVersionTransitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 365
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-${Environment}-snapshots'
+
+  SnapshotsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SnapshotsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTLS
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub '${SnapshotsBucket.Arn}'
+              - !Sub '${SnapshotsBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  PatchRunsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: !Sub '${NamePrefix}-${Environment}-patchruns'
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref KmsKey
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - AttributeName: scope
+          AttributeType: S
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: scope
+          KeyType: HASH
+        - AttributeName: id
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasNotificationEmail
+    Properties:
+      TopicName: !Sub '${NamePrefix}-${Environment}-patching-notifications'
+      KmsMasterKeyId: !Ref KmsKey
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref NotificationEmail
+
+  UnifiedExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal: { Service: states.amazonaws.com }
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal: { Service: events.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: UnifiedOrchestrationCore
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub 'arn:${AWS::Partition}:iam::*:role/${NamePrefix}-${Environment}-PatchExecRole'
+              - Effect: Allow
+                Action: [ s3:PutObject, s3:PutObjectTagging, s3:AbortMultipartUpload ]
+                Resource: !Sub '${SnapshotsBucket.Arn}/*'
+              - Effect: Allow
+                Action: [ kms:Encrypt, kms:GenerateDataKey* ]
+                Resource: !Ref KmsKey
+              - Effect: Allow
+                Action: [ dynamodb:PutItem, dynamodb:UpdateItem ]
+                Resource: !GetAtt PatchRunsTable.Arn
+              - Effect: Allow
+                Action: [ ssm:ListCommandInvocations, ssm:ListCommands, ssm:GetCommandInvocation ]
+                Resource: '*'
+              - Effect: Allow
+                Action: [ cloudwatch:PutMetricData ]
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: 'EC2Patching/Orchestrator'
+              - Effect: Allow
+                Action: [ lambda:InvokeFunction ]
+                Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${NamePrefix}-${Environment}-*'
+              - Effect: Allow
+                Action: [ logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents ]
+                Resource: '*'
+              - Effect: Allow
+                Action: [ states:StartExecution ]
+                Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${NamePrefix}-${Environment}-orchestrator'
+        - !If 
+          - HasNotificationEmail
+          - PolicyName: UnifiedSnsPublish
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: [ sns:Publish ]
+                  Resource: !Ref NotificationTopic
+          - !Ref 'AWS::NoValue'
+
+Outputs:
+  KmsKeyArn:
+    Value: !Ref KmsKey
+  SnapshotsBucketName:
+    Value: !Ref SnapshotsBucket
+  SnapshotsBucketArn:
+    Value: !GetAtt SnapshotsBucket.Arn
+  PatchRunsTableName:
+    Value: !Ref PatchRunsTable
+  UnifiedExecutionRoleArn:
+    Value: !GetAtt UnifiedExecutionRole.Arn
+  NotificationTopicArn:
+    Condition: HasNotificationEmail
+    Value: !Ref NotificationTopic

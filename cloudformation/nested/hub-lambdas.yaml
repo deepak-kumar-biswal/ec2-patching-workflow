@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Patching Orchestrator - Hub Lambdas
+
+Parameters:
+  NamePrefix:
+    Type: String
+  Environment:
+    Type: String
+  UnifiedExecutionRoleArn:
+    Type: String
+  LambdaArtifactBucket:
+    Type: String
+  LambdaArtifactKey:
+    Type: String
+  ReservedConcSend:
+    Type: Number
+    Default: 10
+  ReservedConcPoll:
+    Type: Number
+    Default: 20
+  ReservedConcInventory:
+    Type: Number
+    Default: 5
+  ReservedConcPostVerify:
+    Type: Number
+    Default: 5
+  NotificationTopicArn:
+    Type: String
+    Default: ''
+  SnapshotsBucket:
+    Type: String
+  PatchRunsTableName:
+    Type: String
+  WindowsPrePatchDocument:
+    Type: String
+  WindowsPatchDocument:
+    Type: String
+  WindowsPostPatchDocument:
+    Type: String
+  LinuxPrePatchDocument:
+    Type: String
+  LinuxPatchDocument:
+    Type: String
+  LinuxPostPatchDocument:
+    Type: String
+
+Resources:
+  PreEC2InventoryFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-PreEC2Inventory'
+      Runtime: python3.11
+      Handler: PreEC2Inventory.handler
+      Role: !Ref UnifiedExecutionRoleArn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 512
+      Timeout: 60
+      ReservedConcurrentExecutions: !Ref ReservedConcInventory
+      Environment:
+        Variables:
+          NAME_PREFIX: !Ref NamePrefix
+          ENVIRONMENT: !Ref Environment
+          S3_BUCKET: !Ref SnapshotsBucket
+          DDB_TABLE: !Ref PatchRunsTableName
+          SNS_TOPIC_ARN: !Ref NotificationTopicArn
+
+  PollSsmCommandFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-PollSsmCommand'
+      Runtime: python3.11
+      Handler: PollSsmCommand.handler
+      Role: !Ref UnifiedExecutionRoleArn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 512
+      Timeout: 60
+      ReservedConcurrentExecutions: !Ref ReservedConcPoll
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref NotificationTopicArn
+
+  SendSsmCommandFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-SendSsmCommand'
+      Runtime: python3.11
+      Handler: SendSsmCommand.handler
+      Role: !Ref UnifiedExecutionRoleArn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 512
+      Timeout: 60
+      ReservedConcurrentExecutions: !Ref ReservedConcSend
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref NotificationTopicArn
+          WINDOWS_PRE_PATCH_DOC: !Ref WindowsPrePatchDocument
+          WINDOWS_PATCH_DOC: !Ref WindowsPatchDocument
+          WINDOWS_POST_PATCH_DOC: !Ref WindowsPostPatchDocument
+          LINUX_PRE_PATCH_DOC: !Ref LinuxPrePatchDocument
+          LINUX_PATCH_DOC: !Ref LinuxPatchDocument
+          LINUX_POST_PATCH_DOC: !Ref LinuxPostPatchDocument
+
+  PostEC2VerifyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-PostEC2Verify'
+      Runtime: python3.11
+      Handler: PostEC2Verify.handler
+      Role: !Ref UnifiedExecutionRoleArn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      MemorySize: 512
+      Timeout: 60
+      ReservedConcurrentExecutions: !Ref ReservedConcPostVerify
+      Environment:
+        Variables:
+          NAME_PREFIX: !Ref NamePrefix
+          ENVIRONMENT: !Ref Environment
+          S3_BUCKET: !Ref SnapshotsBucket
+          DDB_TABLE: !Ref PatchRunsTableName
+          SNS_TOPIC_ARN: !Ref NotificationTopicArn
+
+Outputs:
+  PreEC2InventoryFunctionName:
+    Value: !Ref PreEC2InventoryFunction
+  PollSsmCommandFunctionName:
+    Value: !Ref PollSsmCommandFunction
+  SendSsmCommandFunctionName:
+    Value: !Ref SendSsmCommandFunction
+  PostEC2VerifyFunctionName:
+    Value: !Ref PostEC2VerifyFunction

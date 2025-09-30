@@ -75,17 +75,17 @@ def _send_command(
 
 def handler(event, context):
     """
-    Input contract:
-    {
-      "roleArn": "arn:aws:iam::<spoke>:role/<PatchExecRole>",
-      "externalId": "<external-id>",
-      "region": "us-east-1",
-      "documentName": "AWS-RunPatchBaseline",
-      "targets": [{"Key": "tag:PatchGroup", "Values": ["prod"]}],
-      "maxConcurrency": "10%",
-      "maxErrors": "1",
-      "parameters": { ... optional SSM doc params ... }
-    }
+        Input contract:
+        {
+            "roleArn": "arn:aws:iam::<spoke>:role/<PatchExecRole>",
+            "externalId": "<external-id>",
+            "region": "us-east-1",
+            "documentName": "<CustomSSMDocument>",
+            "targets": [{"Key": "tag:PatchGroup", "Values": ["prod"]}],
+            "maxConcurrency": "10%",
+            "maxErrors": "1",
+            "parameters": { ... optional SSM doc params ... }
+        }
 
     Output:
     { "CommandId": "<id>", "Region": "<region>", "Account": "<derived from role arn>" }
@@ -95,7 +95,7 @@ def handler(event, context):
     role_arn = event.get("roleArn")
     external_id = event.get("externalId", "")
     region = event.get("region")
-    document_name = event.get("documentName", "AWS-RunPatchBaseline")
+    document_name = event.get("documentName")
     targets = event.get("targets") or []
     max_conc = event.get("maxConcurrency", "10%")
     max_err = event.get("maxErrors", "1")
@@ -105,6 +105,8 @@ def handler(event, context):
 
     if not role_arn or not region:
         raise ValueError("roleArn and region are required")
+    if not document_name:
+        raise ValueError("documentName is required (custom documents are always used)")
 
     creds = _assume(role_arn, external_id)
     ssm = _session.client(

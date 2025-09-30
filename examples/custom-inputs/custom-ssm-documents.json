@@ -15,7 +15,6 @@
   "preCollect": {
     "enabled": true
   },
-  "useCustomDocuments": true,
   "customDocuments": {
     "windowsPrePatch": "WindowsPrePatch",
     "windowsPatch": "WindowsPatch", 

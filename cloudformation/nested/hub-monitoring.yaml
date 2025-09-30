@@ -1,0 +1,240 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Patching Orchestrator - Monitoring (Alarms, Dashboard)
+
+Parameters:
+  NamePrefix:
+    Type: String
+  Environment:
+    Type: String
+  NotificationTopicArn:
+    Type: String
+    Default: ''
+  PatchRunsTableName:
+    Type: String
+  PreEC2InventoryFunctionName:
+    Type: String
+  SendSsmCommandFunctionName:
+    Type: String
+  PollSsmCommandFunctionName:
+    Type: String
+  PostEC2VerifyFunctionName:
+    Type: String
+  StateMachineArn:
+    Type: String
+
+Conditions:
+  HasNotificationEmail: !Not [!Equals [!Ref NotificationTopicArn, '']]
+
+Resources:
+  StateMachineFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${NamePrefix}-${Environment}-orchestrator-failed'
+      AlarmDescription: 'Alarm when Step Functions orchestration fails.'
+      Namespace: 'AWS/States'
+      MetricName: 'ExecutionsFailed'
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref StateMachineArn
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If 
+        - HasNotificationEmail
+        - - !Ref NotificationTopicArn
+        - !Ref AWS::NoValue
+      OKActions: !If 
+        - HasNotificationEmail
+        - - !Ref NotificationTopicArn
+        - !Ref AWS::NoValue
+
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${NamePrefix}-${Environment}-lambda-errors'
+      AlarmDescription: 'Alarm when Lambda functions have errors'
+      MetricName: 'Errors'
+      Namespace: 'AWS/Lambda'
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If 
+        - HasNotificationEmail
+        - - !Ref NotificationTopicArn
+        - !Ref AWS::NoValue
+
+  PatchFailureRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${NamePrefix}-${Environment}-patch-failure-rate'
+      AlarmDescription: 'Alarm when patch success rate drops below 80%'
+      MetricName: 'SuccessRate'
+      Namespace: 'EC2Patching/Orchestrator'
+      Statistic: Average
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 80
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If 
+        - HasNotificationEmail
+        - - !Ref NotificationTopicArn
+        - !Ref AWS::NoValue
+
+  OrchestratorDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${NamePrefix}-${Environment}-orchestrator'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0, "y": 0, "width": 24, "height": 6,
+              "properties": {
+                "title": "Step Functions: Executions",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["AWS/States","ExecutionsStarted","StateMachineArn","${StateMachineArn}"],
+                  ["AWS/States","ExecutionsSucceeded","StateMachineArn","${StateMachineArn}"],
+                  ["AWS/States","ExecutionsFailed","StateMachineArn","${StateMachineArn}"],
+                  ["AWS/States","ExecutionsAborted","StateMachineArn","${StateMachineArn}"],
+                  ["AWS/States","ExecutionsTimedOut","StateMachineArn","${StateMachineArn}"],
+                  ["AWS/States","ExecutionsThrottled","StateMachineArn","${StateMachineArn}"]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "Step Functions: ExecutionTime (avg ms)",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Average",
+                "period": 300,
+                "metrics": [
+                  ["AWS/States","ExecutionTime","StateMachineArn","${StateMachineArn}"]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 12, "width": 12, "height": 6,
+              "properties": {
+                "title": "Lambda: Invocations (core)",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["AWS/Lambda","Invocations","FunctionName","${PreEC2InventoryFunctionName}"],
+                  ["AWS/Lambda","Invocations","FunctionName","${SendSsmCommandFunctionName}"],
+                  ["AWS/Lambda","Invocations","FunctionName","${PollSsmCommandFunctionName}"],
+                  ["AWS/Lambda","Invocations","FunctionName","${PostEC2VerifyFunctionName}"]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 12, "width": 12, "height": 6,
+              "properties": {
+                "title": "Lambda: Errors (core)",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["AWS/Lambda","Errors","FunctionName","${PreEC2InventoryFunctionName}"],
+                  ["AWS/Lambda","Errors","FunctionName","${SendSsmCommandFunctionName}"],
+                  ["AWS/Lambda","Errors","FunctionName","${PollSsmCommandFunctionName}"],
+                  ["AWS/Lambda","Errors","FunctionName","${PostEC2VerifyFunctionName}"]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 18, "width": 12, "height": 6,
+              "properties": {
+                "title": "Lambda: Duration p95 (ms)",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "p95",
+                "period": 300,
+                "metrics": [
+                  ["AWS/Lambda","Duration","FunctionName","${PreEC2InventoryFunctionName}"],
+                  ["AWS/Lambda","Duration","FunctionName","${SendSsmCommandFunctionName}"],
+                  ["AWS/Lambda","Duration","FunctionName","${PollSsmCommandFunctionName}"],
+                  ["AWS/Lambda","Duration","FunctionName","${PostEC2VerifyFunctionName}"]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 18, "width": 12, "height": 6,
+              "properties": {
+                "title": "Lambda: Throttles",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["AWS/Lambda","Throttles","FunctionName","${PreEC2InventoryFunctionName}"],
+                  ["AWS/Lambda","Throttles","FunctionName","${SendSsmCommandFunctionName}"],
+                  ["AWS/Lambda","Throttles","FunctionName","${PollSsmCommandFunctionName}"],
+                  ["AWS/Lambda","Throttles","FunctionName","${PostEC2VerifyFunctionName}"]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 24, "width": 12, "height": 6,
+              "properties": {
+                "title": "DynamoDB: Throttled Requests",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["AWS/DynamoDB","ThrottledRequests","TableName","${PatchRunsTableName}"]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 24, "width": 12, "height": 6,
+              "properties": {
+                "title": "DynamoDB: Consumed RCUs/WCUs",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["AWS/DynamoDB","ConsumedReadCapacityUnits","TableName","${PatchRunsTableName}"],
+                  ["AWS/DynamoDB","ConsumedWriteCapacityUnits","TableName","${PatchRunsTableName}"]
+                ]
+              }
+            },
+            {
+              "type": "alarm",
+              "x": 0, "y": 30, "width": 6, "height": 4,
+              "properties": {
+                "title": "Alarms",
+                "alarms": [ "${StateMachineFailedAlarm.Arn}" ]
+              }
+            }
+          ]
+        }
+
+Outputs:
+  DashboardName:
+    Value: !Ref OrchestratorDashboard

@@ -280,26 +280,14 @@ aws events put-targets \
 
 ## Systems Manager Integration
 
-### Patch Baseline Selection
-
-```bash
-# Get patch baseline
-aws ssm get-patch-baseline \
-  --baseline-id "pb-0123456789abcdef0"
-
-# Create custom patch baseline
-aws ssm create-patch-baseline \
-  --name "CustomEC2PatchBaseline" \
-  --operating-system "AMAZON_LINUX_2" \
-  --approval-rules 'PatchRules=[{PatchFilterGroup={PatchFilters=[{Key=CLASSIFICATION,Values=[Security,Bugfix]}]},ApproveAfterDays=7}]'
-```
-
 ### Command Execution
 
+The orchestrator uses custom SSM documents for patching. If you need to run commands manually for testing, send a command with your document name and parameters:
+
 ```bash
-# Send patch command
+# Send custom patch command
 aws ssm send-command \
-  --document-name "AWS-RunPatchBaseline" \
+  --document-name "<YourWindowsOrLinuxDocument>" \
   --parameters 'Operation=Install,RebootOption=RebootIfNeeded' \
   --targets 'Key=tag:PatchGroup,Values=default' \
   --max-concurrency 10 \

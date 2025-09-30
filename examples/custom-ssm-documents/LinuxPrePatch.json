@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Linux Pre-Patch Operations - Service Stop and Backup", 
+  "parameters": {
+    "ServiceNames": {
+      "type": "StringList",
+      "description": "List of services to stop before patching",
+      "default": ["httpd", "nginx", "postgresql", "myapp"]
+    },
+    "CreateBackup": {
+      "type": "String", 
+      "description": "Create configuration backup",
+      "allowedValues": ["true", "false"],
+      "default": "true"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "StopServicesAndBackup",
+      "inputs": {
+        "timeoutSeconds": "600", 
+        "runCommand": [
+          "#!/bin/bash",
+          "set -e",
+          "",
+          "echo 'Starting pre-patch operations...'",
+          "",
+          "# Parse service names",
+          "IFS=',' read -ra SERVICES <<< '{{ ServiceNames }}'",
+          "",
+          "# Stop specified services",
+          "for service in \"${SERVICES[@]}\"; do",
+          "    service=$(echo \"$service\" | xargs)  # trim whitespace",
+          "    if systemctl is-active --quiet \"$service\" 2>/dev/null; then",
+          "        echo \"Stopping service: $service\"",
+          "        systemctl stop \"$service\"",
+          "        echo \"$service\" >> /tmp/stopped_services.txt",
+          "    else",
+          "        echo \"Service $service is not running or doesn't exist\"",
+          "    fi",
+          "done",
+          "",
+          "# Create backup if requested", 
+          "if [ '{{ CreateBackup }}' = 'true' ]; then",
+          "    backup_dir=\"/var/backups/pre-patch/$(date +%Y%m%d-%H%M%S)\"",
+          "    mkdir -p \"$backup_dir\"",
+          "    ",
+          "    echo \"Creating backup at: $backup_dir\"",
+          "    ",
+          "    # Backup important configs",
+          "    [ -f /etc/hosts ] && cp /etc/hosts \"$backup_dir/\"",
+          "    [ -f /etc/fstab ] && cp /etc/fstab \"$backup_dir/\"",
+          "    [ -f /etc/ssh/sshd_config ] && cp /etc/ssh/sshd_config \"$backup_dir/\"",
+          "    ",
+          "    # Backup web server configs",
+          "    [ -d /etc/httpd ] && cp -r /etc/httpd \"$backup_dir/\" 2>/dev/null || true",
+          "    [ -d /etc/nginx ] && cp -r /etc/nginx \"$backup_dir/\" 2>/dev/null || true",
+          "    ",
+          "    # Backup database configs",
+          "    [ -d /etc/postgresql ] && cp -r /etc/postgresql \"$backup_dir/\" 2>/dev/null || true",
+          "    [ -f /etc/my.cnf ] && cp /etc/my.cnf \"$backup_dir/\" 2>/dev/null || true", 
+          "    ",
+          "    # Create backup summary",
+          "    echo \"{\\\"backup_time\\\": \\\"$(date -Iseconds)\\\", \\\"location\\\": \\\"$backup_dir\\\", \\\"size\\\": $(du -sk \\\"$backup_dir\\\" | cut -f1)}\" > \"$backup_dir/summary.json\"",
+          "    ",
+          "    echo \"Backup created successfully\"",
+          "fi",
+          "",
+          "echo 'Pre-patch operations completed'"
+        ]
+      }
+    }
+  ]
+}

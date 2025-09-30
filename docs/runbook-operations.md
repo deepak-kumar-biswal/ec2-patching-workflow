@@ -16,7 +16,7 @@ This runbook covers day-2 operations for the EC2 Patching Orchestrator.
 
 ## 3. SSM Run Command
 
-- Patching is executed via `AWS-RunPatchBaseline`.
+- Patching is executed via custom SSM documents (Windows and Linux specific).
 - Outputs are written to S3 (artifact bucket) per instance for auditing.
 - Use MaxConcurrency and MaxErrors to control blast radius.
 
@@ -86,8 +86,10 @@ aws stepfunctions list-executions --state-machine-arn <arn> --status-filter RUNN
 # Tail logs for a function
 aws logs tail /aws/lambda/<function> --follow
 
-# Check SSM command status
-aws ssm list-commands --filters Key=DocumentName,Values=AWS-RunPatchBaseline
+# Check recent SSM commands (optionally filter by document name)
+aws ssm list-commands --max-results 25
+# Example: filter by a custom document
+# aws ssm list-commands --filters Key=DocumentName,Values=<YourDocumentName>
 ```
 
 ## 13. Change Management

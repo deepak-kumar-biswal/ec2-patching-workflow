@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Patching Orchestrator - Schedule (EventBridge Rule)
+
+Parameters:
+  NamePrefix:
+    Type: String
+  Environment:
+    Type: String
+  EnableScheduledExecution:
+    Type: String
+    AllowedValues: [ENABLED, DISABLED]
+  PatchingSchedule:
+    Type: String
+  DefaultPatchGroup:
+    Type: String
+  WindowsPrePatchDocument:
+    Type: String
+  WindowsPatchDocument:
+    Type: String
+  WindowsPostPatchDocument:
+    Type: String
+  LinuxPrePatchDocument:
+    Type: String
+  LinuxPatchDocument:
+    Type: String
+  LinuxPostPatchDocument:
+    Type: String
+  StateMachineArn:
+    Type: String
+  UnifiedExecutionRoleArn:
+    Type: String
+
+Resources:
+  OrchestratorScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${NamePrefix}-${Environment}-patch-schedule'
+      Description: 'Scheduled trigger for EC2 patching orchestrator'
+      State: !Ref EnableScheduledExecution
+      ScheduleExpression: !Ref PatchingSchedule
+      Targets:
+        - Id: 'OrchestratorTarget'
+          Arn: !Ref StateMachineArn
+          RoleArn: !Ref UnifiedExecutionRoleArn
+          Input: !Sub |
+            {
+              "comment": "Scheduled patching execution from EventBridge",
+              "executionName": "scheduled-${Environment}",
+              "accountWaves": [
+                {
+                  "name": "wave-1",
+                  "accounts": ["${AWS::AccountId}"],
+                  "regions": ["${AWS::Region}"]
+                }
+              ],
+              "ec2": {
+                "tagKey": "PatchGroup",
+                "tagValue": "${DefaultPatchGroup}"
+              },
+              "preCollect": { "enabled": true },
+              "customDocuments": {
+                "windowsPrePatch": "${WindowsPrePatchDocument}",
+                "windowsPatch": "${WindowsPatchDocument}",
+                "windowsPostPatch": "${WindowsPostPatchDocument}",
+                "linuxPrePatch": "${LinuxPrePatchDocument}",
+                "linuxPatch": "${LinuxPatchDocument}",
+                "linuxPostPatch": "${LinuxPostPatchDocument}"
+              },
+              "abortOnIssues": true
+            }
+
+Outputs:
+  ScheduleRuleName:
+    Value: !Ref OrchestratorScheduleRule

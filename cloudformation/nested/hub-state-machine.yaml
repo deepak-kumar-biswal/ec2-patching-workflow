@@ -1,0 +1,580 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Patching Orchestrator - State Machine
+
+Parameters:
+  NamePrefix:
+    Type: String
+  Environment:
+    Type: String
+  UnifiedExecutionRoleArn:
+    Type: String
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+  SsmMaxConcurrency:
+    Type: String
+  SsmMaxErrors:
+    Type: String
+  WaveMaxConcurrency:
+    Type: Number
+  AccountMaxConcurrency:
+    Type: Number
+  RegionMaxConcurrency:
+    Type: Number
+  CrossAccountExternalId:
+    Type: String
+    Default: ''
+  SnapshotsBucket:
+    Type: String
+  PreEC2InventoryFunctionName:
+    Type: String
+  PollSsmCommandFunctionName:
+    Type: String
+  SendSsmCommandFunctionName:
+    Type: String
+  PostEC2VerifyFunctionName:
+    Type: String
+
+Resources:
+  OrchestratorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/states/${NamePrefix}-${Environment}-orchestrator'
+      RetentionInDays: !Ref LogRetentionDays
+
+  OrchestratorStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${NamePrefix}-${Environment}-orchestrator'
+      RoleArn: !Ref UnifiedExecutionRoleArn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt OrchestratorLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Definition:
+        Comment: EC2 Patching Orchestrator (CFN) - Simplified without approval
+        StartAt: Waves
+        States:
+          Waves:
+            Type: Map
+            ItemsPath: $.accountWaves
+            MaxConcurrency: !Ref WaveMaxConcurrency
+            End: true
+            Iterator:
+              StartAt: PreWave
+              States:
+                PreWave:
+                  Type: Parallel
+                  Branches:
+                    - StartAt: Inventory
+                      States:
+                        Inventory:
+                          Type: Task
+                          Resource: arn:aws:states:::lambda:invoke
+                          Parameters:
+                            FunctionName: !Ref PreEC2InventoryFunctionName
+                            Payload.$: '$'
+                          End: true
+                  Next: PerAccount
+                PerAccount:
+                  Type: Map
+                  ItemsPath: $.accounts
+                  MaxConcurrency: !Ref AccountMaxConcurrency
+                  Parameters:
+                    account.$: '$$.Map.Item.Value'
+                    regions.$: '$.regions'
+                  Iterator:
+                    StartAt: PerRegion
+                    States:
+                      PerRegion:
+                        Type: Map
+                        ItemsPath: $.regions
+                        Parameters:
+                          region.$: '$$.Map.Item.Value'
+                          account.$: '$.account'
+                        MaxConcurrency: !Ref RegionMaxConcurrency
+                        Iterator:
+                          StartAt: PreCollectEnabled?
+                          States:
+                            PreCollectEnabled?:
+                              Type: Choice
+                              Choices:
+                                - Variable: '$$.Execution.Input.preCollect.enabled'
+                                  BooleanEquals: true
+                                  Next: PreCollect
+                              Default: RunCustomPrePatch
+                            PreCollect:
+                              Type: Parallel
+                              Catch:
+                                - ErrorEquals: [ States.ALL ]
+                                  ResultPath: $.precollect_error
+                                  Next: RunCustomPrePatch
+                              Branches:
+                                - StartAt: PreCollectLinux
+                                  States:
+                                    PreCollectLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.prelinux
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName: 'AWS-RunShellScript'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          parameters:
+                                            commands:
+                                              - 'uname -a'
+                                              - 'cat /etc/os-release || true'
+                                              - 'date -Is'
+                                              - 'df -h'
+                                              - 'free -m || true'
+                                              - 'ps aux --sort=-%cpu | head -n 30'
+                                              - 'systemctl list-units --type=service --state=running | head -n 100 || true'
+                                              - 'ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null || true'
+                                              - 'ip addr'
+                                              - 'uptime'
+                                      Next: PollPreLinux
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.prelinux_error
+                                          Next: SkipPreLinuxPoll
+                                    PollPreLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.pollprelinux
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.prelinux.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/pre/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipPreLinuxPoll:
+                                      Type: Pass
+                                      End: true
+                                - StartAt: PreCollectWindows
+                                  States:
+                                    PreCollectWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.prewindows
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName: 'AWS-RunPowerShellScript'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          parameters:
+                                            commands:
+                                              - 'systeminfo'
+                                              - 'Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber,LastBootUpTime'
+                                              - 'Get-HotFix | Select-Object HotFixID,InstalledOn | Sort-Object InstalledOn -Descending | Select-Object -First 50'
+                                              - 'Get-Service | Where-Object {$_.Status -eq "Running"} | Select-Object Name,DisplayName,Status | Sort-Object Name'
+                                              - 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 50 Name,Id,CPU,WS'
+                                              - 'Get-Volume | Select-Object DriveLetter,FileSystemLabel,FileSystem,Size,SizeRemaining'
+                                              - 'Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess -First 100'
+                                      Next: PollPreWindows
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.prewindows_error
+                                          Next: SkipPreWindowsPoll
+                                    PollPreWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.pollprewindows
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.prewindows.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/pre/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipPreWindowsPoll:
+                                      Type: Pass
+                                      End: true
+                              Next: RunCustomPrePatch
+                            RunCustomPrePatch:
+                              Type: Parallel
+                              Catch:
+                                - ErrorEquals: [ States.ALL ]
+                                  ResultPath: $.custom_prepatch_error
+                                  Next: CustomPatchParallel
+                              Branches:
+                                - StartAt: CustomPrePatchWindows
+                                  States:
+                                    CustomPrePatchWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_pre_windows
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.windowsPrePatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Windows']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-pre/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPreWindows
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.custom_pre_windows_error
+                                          Next: SkipCustomPreWindowsPoll
+                                    PollCustomPreWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_pre_windows
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_pre_windows.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-pre/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipCustomPreWindowsPoll:
+                                      Type: Pass
+                                      End: true
+                                - StartAt: CustomPrePatchLinux
+                                  States:
+                                    CustomPrePatchLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_pre_linux
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.linuxPrePatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Linux']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-pre/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPreLinux
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.custom_pre_linux_error
+                                          Next: SkipCustomPreLinuxPoll
+                                    PollCustomPreLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_pre_linux
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_pre_linux.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-pre/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipCustomPreLinuxPoll:
+                                      Type: Pass
+                                      End: true
+                              Next: CustomPatchParallel
+                            CustomPatchParallel:
+                              Type: Parallel
+                              Branches:
+                                - StartAt: CustomPatchWindows
+                                  States:
+                                    CustomPatchWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_patch_windows
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.windowsPatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Windows']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-patch/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPatchWindows
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                    PollCustomPatchWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_patch_windows
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_patch_windows.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-patch/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                - StartAt: CustomPatchLinux
+                                  States:
+                                    CustomPatchLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_patch_linux
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.linuxPatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Linux']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-patch/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPatchLinux
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                    PollCustomPatchLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_patch_linux
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_patch_linux.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-patch/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                              Next: CustomPostPatch
+                            CustomPostPatch:
+                              Type: Parallel
+                              Catch:
+                                - ErrorEquals: [ States.ALL ]
+                                  ResultPath: $.custom_postpatch_error
+                                  Next: PostVerify
+                              Branches:
+                                - StartAt: CustomPostPatchWindows
+                                  States:
+                                    CustomPostPatchWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_post_windows
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.windowsPostPatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Windows']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-post/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPostWindows
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.custom_post_windows_error
+                                          Next: SkipCustomPostWindowsPoll
+                                    PollCustomPostWindows:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_post_windows
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_post_windows.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-post/account-{}/region-{}/windows", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipCustomPostWindowsPoll:
+                                      Type: Pass
+                                      End: true
+                                - StartAt: CustomPostPatchLinux
+                                  States:
+                                    CustomPostPatchLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.custom_post_linux
+                                      Parameters:
+                                        FunctionName: !Ref SendSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          externalId: !Ref CrossAccountExternalId
+                                          region.$: '$.region'
+                                          documentName.$: 'States.Format("{}", $$.Execution.Input.customDocuments.linuxPostPatch)'
+                                          targets:
+                                            - Key: 'tag:PatchGroup'
+                                              Values.$: 'States.Array($$.Execution.Input.ec2.tagValue)'
+                                            - Key: 'tag:Platform'
+                                              Values: ['Linux']
+                                          maxConcurrency: !Ref SsmMaxConcurrency
+                                          maxErrors: !Ref SsmMaxErrors
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-post/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      Next: PollCustomPostLinux
+                                      Retry:
+                                        - ErrorEquals: [ States.TaskFailed ]
+                                          IntervalSeconds: 5
+                                          BackoffRate: 2.0
+                                          MaxAttempts: 3
+                                      Catch:
+                                        - ErrorEquals: [ States.ALL ]
+                                          ResultPath: $.custom_post_linux_error
+                                          Next: SkipCustomPostLinuxPoll
+                                    PollCustomPostLinux:
+                                      Type: Task
+                                      Resource: arn:aws:states:::lambda:invoke
+                                      ResultPath: $.poll_custom_post_linux
+                                      Parameters:
+                                        FunctionName: !Ref PollSsmCommandFunctionName
+                                        Payload:
+                                          roleArn.$: !Sub 'States.Format("arn:aws:iam::{}:role/{}", $.account, "${NamePrefix}-${Environment}-PatchExecRole")'
+                                          region.$: '$.region'
+                                          externalId: !Ref CrossAccountExternalId
+                                          cmd:
+                                            CommandId.$: '$.custom_post_linux.Payload.CommandId'
+                                          storeOutput: true
+                                          outputS3Bucket: !Ref SnapshotsBucket
+                                          outputS3Prefix.$: 'States.Format("runs/{}/custom-post/account-{}/region-{}/linux", $$.Execution.Id, $.account, $.region)'
+                                      End: true
+                                    SkipCustomPostLinuxPoll:
+                                      Type: Pass
+                                      End: true
+                              Next: PostVerify
+                            PostVerify:
+                              Type: Task
+                              Resource: arn:aws:states:::lambda:invoke
+                              Parameters:
+                                FunctionName: !Ref PostEC2VerifyFunctionName
+                                Payload.$: '$'
+                              ResultPath: $.post
+                              Retry:
+                                - ErrorEquals: [ States.TaskFailed ]
+                                  IntervalSeconds: 5
+                                  BackoffRate: 2.0
+                                  MaxAttempts: 3
+                              Next: EvaluateIssues
+                            EvaluateIssues:
+                              Type: Choice
+                              Choices:
+                                - And:
+                                    - Variable: '$.post.Payload.hasIssues'
+                                      BooleanEquals: true
+                                    - Variable: '$$.Execution.Input.abortOnIssues'
+                                      BooleanEquals: true
+                                  Next: AbortDueToIssues
+                              Default: RegionComplete
+                            RegionComplete:
+                              Type: Succeed
+                            AbortDueToIssues:
+                              Type: Fail
+                              Error: IssuesDetected
+                              Cause: AbortOnIssues flag enabled and issues detected in region
+                        End: true
+                    End: true
+                  End: true
+
+Outputs:
+  StateMachineArn:
+    Value: !Ref OrchestratorStateMachine
+  LogGroupName:
+    Value: !Ref OrchestratorLogGroup

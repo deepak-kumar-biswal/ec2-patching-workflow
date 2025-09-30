@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "2.2", 
+  "description": "Windows Post-Patch Operations - Service Restart and Validation",
+  "parameters": {
+    "ServiceNames": {
+      "type": "StringList",
+      "description": "List of services to restart after patching", 
+      "default": ["IIS", "MSSQLSERVER", "MyCustomApp"]
+    },
+    "ValidateServices": {
+      "type": "String",
+      "description": "Validate service functionality",
+      "allowedValues": ["true", "false"],
+      "default": "true"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runPowerShellScript",
+      "name": "RestartAndValidate", 
+      "inputs": {
+        "timeoutSeconds": "600",
+        "runCommand": [
+          "# Windows Post-Patch Script",
+          "Write-Output 'Starting post-patch operations...'",
+          "",
+          "# Restart specified services",
+          "$services = '{{ ServiceNames }}'.Split(',') | ForEach-Object { $_.Trim() }",
+          "foreach ($service in $services) {",
+          "    if (Get-Service -Name $service -ErrorAction SilentlyContinue) {",
+          "        Write-Output \"Starting service: $service\"",
+          "        Start-Service -Name $service",
+          "        ",
+          "        # Wait for service to start",
+          "        $timeout = 60",
+          "        $counter = 0",
+          "        do {",
+          "            Start-Sleep -Seconds 2",
+          "            $svc = Get-Service -Name $service",
+          "            $counter += 2",
+          "        } while ($svc.Status -ne 'Running' -and $counter -lt $timeout)",
+          "        ",
+          "        if ($svc.Status -eq 'Running') {",
+          "            Write-Output \"Service $service started successfully\"",
+          "        } else {",
+          "            Write-Error \"Service $service failed to start\"",
+          "        }",
+          "    }",
+          "}",
+          "",
+          "# Validate services if requested",
+          "if ('{{ ValidateServices }}' -eq 'true') {",
+          "    Write-Output 'Validating services...'",
+          "    ",
+          "    # Test IIS if running",
+          "    if ((Get-Service -Name W3SVC -ErrorAction SilentlyContinue) -and (Get-Service -Name W3SVC).Status -eq 'Running') {",
+          "        try {",
+          "            $response = Invoke-WebRequest -Uri 'http://localhost' -TimeoutSec 10 -UseBasicParsing",
+          "            Write-Output \"IIS validation: HTTP $($response.StatusCode)\"",
+          "        } catch {",
+          "            Write-Warning \"IIS validation failed: $($_.Exception.Message)\"",
+          "        }",
+          "    }",
+          "    ",
+          "    # Test SQL Server if running",
+          "    if ((Get-Service -Name MSSQLSERVER -ErrorAction SilentlyContinue) -and (Get-Service -Name MSSQLSERVER).Status -eq 'Running') {",
+          "        try {",
+          "            $conn = New-Object System.Data.SqlClient.SqlConnection('Server=localhost;Integrated Security=true;Connection Timeout=10')",
+          "            $conn.Open()",
+          "            Write-Output 'SQL Server validation: Connection successful'",
+          "            $conn.Close()",
+          "        } catch {",
+          "            Write-Warning \"SQL Server validation failed: $($_.Exception.Message)\"",
+          "        }",
+          "    }",
+          "}",
+          "",
+          "# Check for reboot requirement",
+          "if (Get-ChildItem 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired' -ErrorAction SilentlyContinue) {",
+          "    Write-Output 'REBOOT REQUIRED'",
+          "} else {",
+          "    Write-Output 'No reboot required'",
+          "}",
+          "",
+          "Write-Output 'Post-patch operations completed'"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Patching Orchestrator - Share SSM Documents
+
+Parameters:
+  NamePrefix:
+    Type: String
+  Environment:
+    Type: String
+  WindowsCustomPatchDocumentName:
+    Type: String
+  LinuxCustomPatchDocumentName:
+    Type: String
+  SpokeAccountIds:
+    Type: CommaDelimitedList
+
+Conditions:
+  HasSpokeAccounts: !Not [!Equals [!Join ["", !Ref SpokeAccountIds], ""]]
+
+Resources:
+  ShareDocumentsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${NamePrefix}-${Environment}-ShareSSMDocuments'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ShareSSMDocuments
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:ModifyDocumentPermission
+                  - ssm:DescribeDocumentPermission
+                  - ssm:DescribeDocument
+                Resource: 
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${NamePrefix}-${Environment}-*'
+
+  ShareDocumentsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${NamePrefix}-${Environment}-ShareSSMDocuments'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt ShareDocumentsRole.Arn
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+              try:
+                  ssm = boto3.client('ssm')
+                  request_type = event['RequestType']
+
+                  if request_type in ['Create', 'Update']:
+                      document_names = event['ResourceProperties']['DocumentNames']
+                      account_ids = event['ResourceProperties']['AccountIds']
+                      account_ids = [aid.strip() for aid in account_ids if aid and aid.strip()]
+                      if account_ids:
+                          for doc_name in document_names:
+                              try:
+                                  ssm.describe_document(Name=doc_name)
+                                  ssm.modify_document_permission(
+                                      Name=doc_name,
+                                      PermissionType='Share',
+                                      AccountIdsToAdd=account_ids
+                                  )
+                              except Exception as e:
+                                  logger.error(f"Failed to share {doc_name}: {e}")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  elif request_type == 'Delete':
+                      # No-op
+                      pass
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  logger.error(str(e))
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  ShareWindowsDocument:
+    Type: AWS::CloudFormation::CustomResource
+    Condition: HasSpokeAccounts
+    Properties:
+      ServiceToken: !GetAtt ShareDocumentsFunction.Arn
+      DocumentNames:
+        - !Ref WindowsCustomPatchDocumentName
+      AccountIds: !Ref SpokeAccountIds
+
+  ShareLinuxDocument:
+    Type: AWS::CloudFormation::CustomResource
+    Condition: HasSpokeAccounts
+    Properties:
+      ServiceToken: !GetAtt ShareDocumentsFunction.Arn
+      DocumentNames:
+        - !Ref LinuxCustomPatchDocumentName
+      AccountIds: !Ref SpokeAccountIds
+
+Outputs:
+  ShareFunctionArn:
+    Value: !GetAtt ShareDocumentsFunction.Arn
