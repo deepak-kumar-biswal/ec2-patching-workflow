@@ -1,4 +1,6 @@
-# 🔧 Enterpri## Key Features
+# 🔧 Enterprise Multi-Account Patching Platform (Simplified)
+
+## Key Features
 
 - **Simplified Architecture**: Single IAM role, direct execution (no approval workflow)
 - **Automated Scheduling**: EventBridge-triggered patching with configurable cron schedules  
@@ -8,7 +10,7 @@
 - **Custom SSM Documents**: Built-in Windows/Linux pre/patch/post documents are always created and used
 - **Pre/Post Verification**: Automated system state capture and verification
 - **Flexible Targeting**: EC2 tag-based instance selection with multi-region support
-- **Error Handling**: Robust retry mechanisms and failure isolation2 Multi-Account Patching Platform (Simplified)
+- **Error Handling**: Robust retry mechanisms and failure isolation
 
 Production-grade EC2 patching orchestration for 100s of AWS accounts (2k+ instances) - **Streamlined for Direct Execution**
 
@@ -17,7 +19,7 @@ Production-grade EC2 patching orchestration for 100s of AWS accounts (2k+ instan
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-## � Simplified Enterprise-Grade EC2 Patching Orchestration
+## Simplified Enterprise-Grade EC2 Patching Orchestration
 
 This platform deploys a **simplified, production-grade** EC2 patching orchestrator using a hub-and-spoke architecture for 100s of AWS accounts (scales to thousands of instances) with **direct automated execution** and comprehensive monitoring. 
 
