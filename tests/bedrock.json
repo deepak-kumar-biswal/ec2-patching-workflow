@@ -1,0 +1,33 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 24,
+      "height": 12,
+      "properties": {
+        "title": "Claude Models - Monthly Input & Output Tokens",
+        "region": "us-east-1",
+        "view": "table",
+        "stat": "Sum",
+        "period": 300,
+        "setPeriodToTimeRange": true,
+        "periodOverride": "inherit",
+        "metrics": [
+          [ "AWS/Bedrock", "InputTokenCount",  "ModelId", "anthropic.claude-3-5-sonnet-20240620-v1:0", {"label": "Claude 3.5 Sonnet - Input"} ],
+          [ "AWS/Bedrock", "OutputTokenCount", "ModelId", "anthropic.claude-3-5-sonnet-20240620-v1:0", {"label": "Claude 3.5 Sonnet - Output"} ],
+
+          [ "AWS/Bedrock", "InputTokenCount",  "ModelId", "anthropic.claude-3-5-haiku-20241022-v1:0", {"label": "Claude 3.5 Haiku - Input"} ],
+          [ "AWS/Bedrock", "OutputTokenCount", "ModelId", "anthropic.claude-3-5-haiku-20241022-v1:0", {"label": "Claude 3.5 Haiku - Output"} ],
+
+          [ "AWS/Bedrock", "InputTokenCount",  "ModelId", "anthropic.claude-3-opus-20240229-v1:0", {"label": "Claude 3 Opus - Input"} ],
+          [ "AWS/Bedrock", "OutputTokenCount", "ModelId", "anthropic.claude-3-opus-20240229-v1:0", {"label": "Claude 3 Opus - Output"} ],
+
+          [ "AWS/Bedrock", "InputTokenCount",  "ModelId", "anthropic.claude-3-sonnet-20240229-v1:0", {"label": "Claude 3 Sonnet - Input"} ],
+          [ "AWS/Bedrock", "OutputTokenCount", "ModelId", "anthropic.claude-3-sonnet-20240229-v1:0", {"label": "Claude 3 Sonnet - Output"} ]
+        ]
+      }
+    }
+  ]
+}
