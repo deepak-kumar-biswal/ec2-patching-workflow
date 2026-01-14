@@ -45,7 +45,7 @@ The **Audit & Compliance Agent** is designed to automate compliance verification
 │                                                                                  │
 │  ┌───────────────────────────────────────────────────────────────────────────┐  │
 │  │                           AGENT CORE                                       │  │
-│  │  Model: anthropic.claude-3-sonnet-20240229-v1:0                           │  │
+│  │  Model: anthropic.claude-4.5-sonnet-20250101-v1:0                         │  │
 │  │  Temperature: 0.1 (low for factual accuracy)                              │  │
 │  │  Max Tokens: 4096                                                          │  │
 │  │                                                                            │  │
@@ -1368,7 +1368,7 @@ AgentExecutionRole:
               Action:
                 - bedrock:InvokeModel
               Resource:
-                - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet*'
+                - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-4.5-sonnet*'
                 - 'arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2*'
             
             # Knowledge Base Access
@@ -1393,7 +1393,7 @@ AuditComplianceAgent:
     AgentName: !Sub '${NamePrefix}-${Environment}-audit-compliance-agent'
     Description: 'Audit and Compliance Agent for EC2 Patching Platform'
     AgentResourceRoleArn: !GetAtt AuditAgentRole.Arn
-    FoundationModel: 'anthropic.claude-3-sonnet-20240229-v1:0'
+    FoundationModel: 'anthropic.claude-4.5-sonnet-20250101-v1:0'
     IdleSessionTTLInSeconds: 1800
     Instruction: !Sub |
       ${AuditAgentSystemPrompt}

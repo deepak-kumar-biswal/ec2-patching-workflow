@@ -46,7 +46,7 @@ The **Anomaly Detection & Root Cause Analysis Agent** is a specialized diagnosti
 │                                                                                       │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │                              AGENT CORE                                          │ │
-│  │  Model: anthropic.claude-3-opus-20240229-v1:0                                   │ │
+│  │  Model: anthropic.claude-4.5-sonnet-20250101-v1:0                               │ │
 │  │  Temperature: 0.3 (enhanced reasoning)                                          │ │
 │  │  Max Tokens: 16384 (detailed analysis)                                          │ │
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │

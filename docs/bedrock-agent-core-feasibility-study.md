@@ -135,7 +135,7 @@ AWS Bedrock Agent Core (as of 2025/2026) provides:
 
 ```yaml
 AuditComplianceAgent:
-  foundation_model: anthropic.claude-3-sonnet
+  foundation_model: anthropic.claude-4.5-sonnet
   knowledge_bases:
     - compliance_frameworks:        # SOC2, PCI-DSS, HIPAA requirements
     - patch_policy_documents:       # Internal patch SLAs, policies
@@ -194,7 +194,7 @@ AuditComplianceAgent:
 
 ```yaml
 ReportingAnalyticsAgent:
-  foundation_model: anthropic.claude-3-sonnet
+  foundation_model: anthropic.claude-4.5-sonnet
   knowledge_bases:
     - patch_execution_history:      # Indexed from S3/DynamoDB
     - instance_metadata:            # EC2 inventory data
@@ -255,7 +255,7 @@ ReportingAnalyticsAgent:
 
 ```yaml
 AnomalyDetectionAgent:
-  foundation_model: anthropic.claude-3-opus  # Higher reasoning for complex analysis
+  foundation_model: anthropic.claude-4.5-sonnet  # Enhanced reasoning capabilities
   knowledge_bases:
     - error_pattern_library:        # Known failure patterns and solutions
     - historical_incidents:         # Past incident post-mortems
@@ -319,7 +319,7 @@ AnomalyDetectionAgent:
 
 ```yaml
 ChatOpsAgent:
-  foundation_model: anthropic.claude-3-sonnet
+  foundation_model: anthropic.claude-4.5-sonnet
   knowledge_bases:
     - operations_runbooks:          # runbook-operations.md content
     - troubleshooting_guides:       # troubleshooting-guide.md
@@ -387,7 +387,7 @@ ChatOpsAgent:
 
 ```yaml
 PredictivePlanningAgent:
-  foundation_model: anthropic.claude-3-opus
+  foundation_model: anthropic.claude-4.5-sonnet
   knowledge_bases:
     - historical_executions:        # Past patch run durations, outcomes
     - instance_characteristics:     # Instance types, workloads, criticality
@@ -447,7 +447,7 @@ PredictivePlanningAgent:
 
 ```yaml
 AutoRemediationAgent:
-  foundation_model: anthropic.claude-3-opus
+  foundation_model: anthropic.claude-4.5-sonnet
   guardrails:
     - require_approval_for_destructive:
         threshold: high_risk_score

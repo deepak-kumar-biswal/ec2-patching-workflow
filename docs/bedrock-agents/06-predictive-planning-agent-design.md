@@ -46,7 +46,7 @@ This agent operates in a **read-only, advisory capacity**:
 │                                                                                       │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │                              AGENT CORE                                          │ │
-│  │  Model: anthropic.claude-3-sonnet-20240229-v1:0                                 │ │
+│  │  Model: anthropic.claude-4.5-sonnet-20250101-v1:0                               │ │
 │  │  Temperature: 0.2 (balanced for analytical reasoning)                           │ │
 │  │  Max Tokens: 4096 (detailed recommendations)                                    │ │
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │

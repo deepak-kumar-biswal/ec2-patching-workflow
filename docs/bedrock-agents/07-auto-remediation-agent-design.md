@@ -53,7 +53,7 @@ The **Auto-Remediation Agent** is the most carefully controlled agent in the mul
 │                                                                                       │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │                              AGENT CORE                                          │ │
-│  │  Model: anthropic.claude-3-sonnet-20240229-v1:0                                 │ │
+│  │  Model: anthropic.claude-4.5-sonnet-20250101-v1:0                               │ │
 │  │  Temperature: 0.0 (deterministic, predictable)                                  │ │
 │  │  Max Tokens: 2048 (concise action descriptions)                                 │ │
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │

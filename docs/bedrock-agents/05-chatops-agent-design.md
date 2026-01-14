@@ -45,7 +45,7 @@ The **ChatOps Agent** provides a conversational interface to the EC2 Patching Pl
 │                                                                                       │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │                              AGENT CORE                                          │ │
-│  │  Model: anthropic.claude-3-sonnet-20240229-v1:0                                 │ │
+│  │  Model: anthropic.claude-4.5-sonnet-20250101-v1:0                               │ │
 │  │  Temperature: 0.15 (precise, consistent responses)                              │ │
 │  │  Max Tokens: 2048 (concise chat responses)                                      │ │
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
