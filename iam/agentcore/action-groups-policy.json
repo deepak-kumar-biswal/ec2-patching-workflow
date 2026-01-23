@@ -1,0 +1,121 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LambdaActionGroupInvocation",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:InvokeFunction"
+      ],
+      "Resource": [
+        "arn:aws:lambda:*:${AWS::AccountId}:function:AgentCore-*",
+        "arn:aws:lambda:*:${AWS::AccountId}:function:agentcore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "arn:aws:bedrock:*:${AWS::AccountId}:agent/*"
+        }
+      }
+    },
+    {
+      "Sid": "LambdaActionGroupManagement",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:ListFunctions",
+        "lambda:ListVersionsByFunction",
+        "lambda:ListAliases"
+      ],
+      "Resource": [
+        "arn:aws:lambda:*:${AWS::AccountId}:function:AgentCore-*",
+        "arn:aws:lambda:*:${AWS::AccountId}:function:agentcore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "LambdaResourcePolicy",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:AddPermission",
+        "lambda:RemovePermission",
+        "lambda:GetPolicy"
+      ],
+      "Resource": [
+        "arn:aws:lambda:*:${AWS::AccountId}:function:AgentCore-*",
+        "arn:aws:lambda:*:${AWS::AccountId}:function:agentcore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}",
+          "lambda:Principal": "bedrock.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "APIGatewayActionGroupInvocation",
+      "Effect": "Allow",
+      "Action": [
+        "execute-api:Invoke",
+        "execute-api:ManageConnections"
+      ],
+      "Resource": [
+        "arn:aws:execute-api:*:${AWS::AccountId}:*/*/POST/*",
+        "arn:aws:execute-api:*:${AWS::AccountId}:*/*/GET/*",
+        "arn:aws:execute-api:*:${AWS::AccountId}:*/*/PUT/*",
+        "arn:aws:execute-api:*:${AWS::AccountId}:*/*/DELETE/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "BedrockActionGroupConfiguration",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:CreateAgentActionGroup",
+        "bedrock:UpdateAgentActionGroup",
+        "bedrock:DeleteAgentActionGroup",
+        "bedrock:GetAgentActionGroup",
+        "bedrock:ListAgentActionGroups"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "StepFunctionsActionGroup",
+      "Effect": "Allow",
+      "Action": [
+        "states:StartExecution",
+        "states:StartSyncExecution",
+        "states:DescribeExecution",
+        "states:StopExecution",
+        "states:GetExecutionHistory"
+      ],
+      "Resource": [
+        "arn:aws:states:*:${AWS::AccountId}:stateMachine:AgentCore-*",
+        "arn:aws:states:*:${AWS::AccountId}:execution:AgentCore-*:*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    }
+  ]
+}

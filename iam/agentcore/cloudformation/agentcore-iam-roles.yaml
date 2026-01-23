@@ -1,0 +1,602 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS AgentCore IAM Roles and Policies - Modular Multi-Agent Platform'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Core Configuration"
+        Parameters:
+          - ApplicationName
+          - Environment
+          - Platform
+      - Label:
+          default: "Feature Flags"
+        Parameters:
+          - EnableKnowledgeBase
+          - EnableActionGroups
+          - EnableGuardrails
+          - EnableMultiAgent
+          - EnableCrossAccount
+      - Label:
+          default: "Cross-Account Configuration"
+        Parameters:
+          - TrustedAccountIds
+          - ExternalId
+          - OrganizationId
+      - Label:
+          default: "Resource Naming"
+        Parameters:
+          - BucketPrefix
+          - VpcId
+
+Parameters:
+  ApplicationName:
+    Type: String
+    Description: Name of the application using AgentCore
+    AllowedPattern: ^[a-zA-Z][a-zA-Z0-9-]{2,63}$
+    ConstraintDescription: Must start with letter, 3-64 chars, alphanumeric and hyphens only
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Default: dev
+    Description: Deployment environment
+
+  Platform:
+    Type: String
+    Description: Platform identifier for multi-agent collaboration
+    Default: agentcore-platform
+
+  EnableKnowledgeBase:
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'true'
+    Description: Enable Knowledge Base permissions
+
+  EnableActionGroups:
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'true'
+    Description: Enable Action Groups (Lambda) permissions
+
+  EnableGuardrails:
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'true'
+    Description: Enable Guardrails permissions
+
+  EnableMultiAgent:
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'true'
+    Description: Enable Multi-Agent collaboration permissions
+
+  EnableCrossAccount:
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+    Description: Enable Cross-Account access permissions
+
+  TrustedAccountIds:
+    Type: CommaDelimitedList
+    Description: List of trusted AWS account IDs for cross-account access
+    Default: ''
+
+  ExternalId:
+    Type: String
+    Description: External ID for cross-account role assumption
+    Default: ''
+    NoEcho: true
+
+  OrganizationId:
+    Type: String
+    Description: AWS Organization ID for org-level policies
+    Default: ''
+
+  BucketPrefix:
+    Type: String
+    Description: Prefix for S3 bucket names
+    Default: agentcore
+
+  VpcId:
+    Type: String
+    Description: VPC ID for network policy constraints
+    Default: ''
+
+Conditions:
+  HasKnowledgeBase: !Equals [!Ref EnableKnowledgeBase, 'true']
+  HasActionGroups: !Equals [!Ref EnableActionGroups, 'true']
+  HasGuardrails: !Equals [!Ref EnableGuardrails, 'true']
+  HasMultiAgent: !Equals [!Ref EnableMultiAgent, 'true']
+  HasCrossAccount: !Equals [!Ref EnableCrossAccount, 'true']
+  HasExternalId: !Not [!Equals [!Ref ExternalId, '']]
+  HasVpc: !Not [!Equals [!Ref VpcId, '']]
+
+Resources:
+  # =============================================================================
+  # IAM Execution Role for Bedrock Agents
+  # =============================================================================
+  AgentCoreExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'AgentCore-${ApplicationName}-${Environment}-ExecutionRole'
+      Description: Execution role for AWS AgentCore Bedrock Agents
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: BedrockAgentTrust
+            Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:agent/*'
+          - Sid: BedrockKnowledgeBaseTrust
+            Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*'
+      Tags:
+        - Key: AgentCore:Application
+          Value: !Ref ApplicationName
+        - Key: AgentCore:Environment
+          Value: !Ref Environment
+        - Key: AgentCore:Platform
+          Value: !Ref Platform
+        - Key: AgentCore:ManagedBy
+          Value: CloudFormation
+
+  # =============================================================================
+  # Base Policy - Required for all agents
+  # =============================================================================
+  AgentCoreBasePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-${Environment}-Base'
+      Description: Base permissions for AgentCore agents
+      Roles:
+        - !Ref AgentCoreExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: BedrockAgentOperations
+            Effect: Allow
+            Action:
+              - bedrock:InvokeAgent
+              - bedrock:GetAgent
+              - bedrock:GetAgentVersion
+              - bedrock:GetAgentAlias
+              - bedrock:ListAgents
+              - bedrock:ListAgentVersions
+              - bedrock:ListAgentAliases
+              - bedrock:PrepareAgent
+            Resource:
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:agent/*'
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:agent-alias/*'
+          - Sid: BedrockPromptManagement
+            Effect: Allow
+            Action:
+              - bedrock:GetPrompt
+              - bedrock:ListPrompts
+            Resource:
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:prompt/*'
+
+  # =============================================================================
+  # Model Access Policy - Required for model invocation
+  # =============================================================================
+  AgentCoreModelAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-${Environment}-ModelAccess'
+      Description: Foundation model invocation permissions
+      Roles:
+        - !Ref AgentCoreExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: FoundationModelInvocation
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-*'
+              - 'arn:aws:bedrock:*::foundation-model/amazon.titan-*'
+              - 'arn:aws:bedrock:*::foundation-model/cohere.embed-*'
+              - 'arn:aws:bedrock:*::foundation-model/meta.llama*'
+          - Sid: ConverseAPI
+            Effect: Allow
+            Action:
+              - bedrock:Converse
+              - bedrock:ConverseStream
+            Resource:
+              - 'arn:aws:bedrock:*::foundation-model/*'
+          - Sid: ModelDiscovery
+            Effect: Allow
+            Action:
+              - bedrock:GetFoundationModel
+              - bedrock:ListFoundationModels
+            Resource: '*'
+
+  # =============================================================================
+  # Knowledge Base Policy - Conditional
+  # =============================================================================
+  AgentCoreKnowledgeBasePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: HasKnowledgeBase
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-${Environment}-KnowledgeBase'
+      Description: Knowledge Base and RAG permissions
+      Roles:
+        - !Ref AgentCoreExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: KnowledgeBaseOperations
+            Effect: Allow
+            Action:
+              - bedrock:Retrieve
+              - bedrock:RetrieveAndGenerate
+              - bedrock:GetKnowledgeBase
+              - bedrock:ListKnowledgeBases
+              - bedrock:GetDataSource
+              - bedrock:ListDataSources
+            Resource:
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*'
+          - Sid: EmbeddingModelAccess
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+            Resource:
+              - 'arn:aws:bedrock:*::foundation-model/amazon.titan-embed-*'
+              - 'arn:aws:bedrock:*::foundation-model/cohere.embed-*'
+
+  # =============================================================================
+  # S3 Data Access Policy
+  # =============================================================================
+  AgentCoreS3DataPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: HasKnowledgeBase
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-${Environment}-S3Data'
+      Description: S3 data access for knowledge bases and artifacts
+      Roles:
+        - !Ref AgentCoreExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: S3ReadAccess
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:ListBucket
+            Resource:
+              - !Sub 'arn:aws:s3:::${BucketPrefix}-${ApplicationName}-*'
+              - !Sub 'arn:aws:s3:::${BucketPrefix}-${ApplicationName}-*/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'true'
+
+  # =============================================================================
+  # OpenSearch Serverless Policy
+  # =============================================================================
+  AgentCoreOpenSearchPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: HasKnowledgeBase
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-${Environment}-OpenSearch'
+      Description: OpenSearch Serverless vector store access
+      Roles:
+        - !Ref AgentCoreExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: OpenSearchServerlessAccess
+            Effect: Allow
+            Action:
+              - aoss:APIAccessAll
+            Resource:
+              - !Sub 'arn:aws:aoss:*:${AWS::AccountId}:collection/*'
+
+  # =============================================================================
+  # Action Groups Policy - Conditional
+  # =============================================================================
+  AgentCoreActionGroupsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: HasActionGroups
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-${Environment}-ActionGroups'
+      Description: Lambda action group invocation permissions
+      Roles:
+        - !Ref AgentCoreExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: LambdaInvocation
+            Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource:
+              - !Sub 'arn:aws:lambda:*:${AWS::AccountId}:function:AgentCore-${ApplicationName}-*'
+              - !Sub 'arn:aws:lambda:*:${AWS::AccountId}:function:agentcore-${ApplicationName}-*'
+
+  # =============================================================================
+  # Guardrails Policy - Conditional
+  # =============================================================================
+  AgentCoreGuardrailsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: HasGuardrails
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-${Environment}-Guardrails'
+      Description: Guardrails and content filtering permissions
+      Roles:
+        - !Ref AgentCoreExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: GuardrailsApply
+            Effect: Allow
+            Action:
+              - bedrock:ApplyGuardrail
+              - bedrock:GetGuardrail
+              - bedrock:ListGuardrails
+            Resource:
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:guardrail/*'
+
+  # =============================================================================
+  # Multi-Agent Collaboration Policy - Conditional
+  # =============================================================================
+  AgentCoreMultiAgentPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: HasMultiAgent
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-${Environment}-MultiAgent'
+      Description: Multi-agent collaboration and orchestration permissions
+      Roles:
+        - !Ref AgentCoreExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AgentCollaboration
+            Effect: Allow
+            Action:
+              - bedrock:InvokeAgent
+              - bedrock:GetAgentMemory
+            Resource:
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:agent/*'
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:agent-alias/*'
+          - Sid: FlowOrchestration
+            Effect: Allow
+            Action:
+              - bedrock:InvokeFlow
+              - bedrock:GetFlow
+              - bedrock:GetFlowAlias
+            Resource:
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:flow/*'
+          - Sid: EventCoordination
+            Effect: Allow
+            Action:
+              - events:PutEvents
+            Resource:
+              - !Sub 'arn:aws:events:*:${AWS::AccountId}:event-bus/agentcore-*'
+          - Sid: AgentStateDynamoDB
+            Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+            Resource:
+              - !Sub 'arn:aws:dynamodb:*:${AWS::AccountId}:table/AgentCore-*'
+
+  # =============================================================================
+  # CloudWatch Logging Policy - Required
+  # =============================================================================
+  AgentCoreCloudWatchPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-${Environment}-CloudWatch'
+      Description: CloudWatch logging and monitoring permissions
+      Roles:
+        - !Ref AgentCoreExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudWatchLogs
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/bedrock/*'
+              - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/bedrock/*:*'
+              - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/agentcore/*'
+              - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/agentcore/*:*'
+          - Sid: CloudWatchMetrics
+            Effect: Allow
+            Action:
+              - cloudwatch:PutMetricData
+            Resource: '*'
+            Condition:
+              StringEquals:
+                cloudwatch:namespace:
+                  - AgentCore/Agents
+                  - AgentCore/Platform
+                  - AWS/Bedrock
+
+  # =============================================================================
+  # Cross-Account Policy - Conditional
+  # =============================================================================
+  AgentCoreCrossAccountPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: HasCrossAccount
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-${Environment}-CrossAccount'
+      Description: Cross-account access permissions
+      Roles:
+        - !Ref AgentCoreExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CrossAccountAgentAccess
+            Effect: Allow
+            Action:
+              - bedrock:InvokeAgent
+              - bedrock:Retrieve
+            Resource:
+              - 'arn:aws:bedrock:*:*:agent/*'
+              - 'arn:aws:bedrock:*:*:knowledge-base/*'
+            Condition:
+              StringEquals:
+                aws:ResourceTag/AgentCore:CrossAccountAccess: 'true'
+
+  # =============================================================================
+  # Service Role for Lambda Functions (Action Groups)
+  # =============================================================================
+  AgentCoreLambdaRole:
+    Type: AWS::IAM::Role
+    Condition: HasActionGroups
+    Properties:
+      RoleName: !Sub 'AgentCore-${ApplicationName}-${Environment}-LambdaRole'
+      Description: Service role for AgentCore Lambda action group functions
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags:
+        - Key: AgentCore:Application
+          Value: !Ref ApplicationName
+        - Key: AgentCore:Environment
+          Value: !Ref Environment
+
+  # =============================================================================
+  # Permissions Boundary for AgentCore Roles
+  # =============================================================================
+  AgentCorePermissionsBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'AgentCore-${ApplicationName}-PermissionsBoundary'
+      Description: Permissions boundary for all AgentCore roles
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowBedrockServices
+            Effect: Allow
+            Action:
+              - bedrock:*
+            Resource: '*'
+          - Sid: AllowSupportingServices
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:ListBucket
+              - logs:*
+              - cloudwatch:PutMetricData
+              - lambda:InvokeFunction
+              - secretsmanager:GetSecretValue
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              - aoss:APIAccessAll
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - events:PutEvents
+            Resource: '*'
+          - Sid: DenyIAMEscalation
+            Effect: Deny
+            Action:
+              - iam:CreateUser
+              - iam:CreateRole
+              - iam:AttachRolePolicy
+              - iam:PutRolePolicy
+              - iam:DeleteRolePolicy
+              - iam:UpdateAssumeRolePolicy
+            Resource: '*'
+          - Sid: DenyOrganizationChanges
+            Effect: Deny
+            Action:
+              - organizations:*
+            Resource: '*'
+
+Outputs:
+  ExecutionRoleArn:
+    Description: ARN of the AgentCore Execution Role
+    Value: !GetAtt AgentCoreExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ExecutionRoleArn'
+
+  ExecutionRoleName:
+    Description: Name of the AgentCore Execution Role
+    Value: !Ref AgentCoreExecutionRole
+    Export:
+      Name: !Sub '${AWS::StackName}-ExecutionRoleName'
+
+  LambdaRoleArn:
+    Condition: HasActionGroups
+    Description: ARN of the Lambda Role for Action Groups
+    Value: !GetAtt AgentCoreLambdaRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaRoleArn'
+
+  PermissionsBoundaryArn:
+    Description: ARN of the Permissions Boundary
+    Value: !Ref AgentCorePermissionsBoundary
+    Export:
+      Name: !Sub '${AWS::StackName}-PermissionsBoundaryArn'
+
+  BasePolicyArn:
+    Description: ARN of the Base Policy
+    Value: !Ref AgentCoreBasePolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-BasePolicyArn'
+
+  ModelAccessPolicyArn:
+    Description: ARN of the Model Access Policy
+    Value: !Ref AgentCoreModelAccessPolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-ModelAccessPolicyArn'
+
+  KnowledgeBasePolicyArn:
+    Condition: HasKnowledgeBase
+    Description: ARN of the Knowledge Base Policy
+    Value: !Ref AgentCoreKnowledgeBasePolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-KnowledgeBasePolicyArn'
+
+  MultiAgentPolicyArn:
+    Condition: HasMultiAgent
+    Description: ARN of the Multi-Agent Policy
+    Value: !Ref AgentCoreMultiAgentPolicy
+    Export:
+      Name: !Sub '${AWS::StackName}-MultiAgentPolicyArn'

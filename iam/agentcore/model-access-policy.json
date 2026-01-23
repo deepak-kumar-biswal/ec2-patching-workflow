@@ -1,0 +1,119 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BedrockFoundationModelInvocation",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-*",
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-opus-*",
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-haiku-*",
+        "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-*",
+        "arn:aws:bedrock:*::foundation-model/amazon.titan-text-*",
+        "arn:aws:bedrock:*::foundation-model/cohere.embed-*",
+        "arn:aws:bedrock:*::foundation-model/meta.llama*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "bedrock:InferenceProfileArn": ""
+        }
+      }
+    },
+    {
+      "Sid": "BedrockCrossRegionInference",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "BedrockCustomModelAccess",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:GetCustomModel",
+        "bedrock:ListCustomModels"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:custom-model/*",
+        "arn:aws:bedrock:*:${AWS::AccountId}:provisioned-model/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "BedrockModelManagement",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:GetFoundationModel",
+        "bedrock:ListFoundationModels",
+        "bedrock:GetModelInvocationLoggingConfiguration"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockProvisionedThroughput",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:GetProvisionedModelThroughput",
+        "bedrock:ListProvisionedModelThroughputs"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:provisioned-model/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "BedrockConverse",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:Converse",
+        "bedrock:ConverseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/*",
+        "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
+      ]
+    },
+    {
+      "Sid": "BedrockAgentRuntimeInvocation",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeAgent",
+        "bedrock:Retrieve",
+        "bedrock:RetrieveAndGenerate"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent/*",
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent-alias/*",
+        "arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    }
+  ]
+}

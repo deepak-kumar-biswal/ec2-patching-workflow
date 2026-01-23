@@ -1,0 +1,109 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BedrockKnowledgeBaseOperations",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:CreateKnowledgeBase",
+        "bedrock:GetKnowledgeBase",
+        "bedrock:UpdateKnowledgeBase",
+        "bedrock:DeleteKnowledgeBase",
+        "bedrock:ListKnowledgeBases",
+        "bedrock:AssociateAgentKnowledgeBase",
+        "bedrock:DisassociateAgentKnowledgeBase",
+        "bedrock:GetAgentKnowledgeBase",
+        "bedrock:ListAgentKnowledgeBases",
+        "bedrock:UpdateAgentKnowledgeBase"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*",
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "AgentCore:Application",
+            "AgentCore:Environment",
+            "AgentCore:KnowledgeBaseId"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "BedrockDataSourceManagement",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:CreateDataSource",
+        "bedrock:GetDataSource",
+        "bedrock:UpdateDataSource",
+        "bedrock:DeleteDataSource",
+        "bedrock:ListDataSources",
+        "bedrock:StartIngestionJob",
+        "bedrock:GetIngestionJob",
+        "bedrock:ListIngestionJobs",
+        "bedrock:StopIngestionJob"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "BedrockRetrievalOperations",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:Retrieve",
+        "bedrock:RetrieveAndGenerate"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "BedrockKnowledgeBaseWithModel",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-*",
+        "arn:aws:bedrock:*::foundation-model/cohere.embed-*"
+      ],
+      "Condition": {
+        "ForAnyValue:StringEquals": {
+          "bedrock:InvokeModelUseCases": [
+            "KNOWLEDGE_BASE"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "BedrockGuardrailsForKnowledgeBase",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:ApplyGuardrail"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:guardrail/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    }
+  ]
+}

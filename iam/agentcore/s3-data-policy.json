@@ -1,0 +1,153 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3KnowledgeBaseDataAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:GetObjectTagging",
+        "s3:ListBucket",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": [
+        "arn:aws:s3:::agentcore-*-knowledge-base-*",
+        "arn:aws:s3:::agentcore-*-knowledge-base-*/*",
+        "arn:aws:s3:::${BucketPrefix}-*-data",
+        "arn:aws:s3:::${BucketPrefix}-*-data/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "s3:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        },
+        "Bool": {
+          "aws:SecureTransport": "true"
+        }
+      }
+    },
+    {
+      "Sid": "S3DataSourceIngestion",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:GetObjectAttributes",
+        "s3:ListBucket",
+        "s3:HeadObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::agentcore-*-datasource-*",
+        "arn:aws:s3:::agentcore-*-datasource-*/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "s3:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        },
+        "Bool": {
+          "aws:SecureTransport": "true"
+        }
+      }
+    },
+    {
+      "Sid": "S3AgentArtifactStorage",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject",
+        "s3:GetObjectVersion",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::agentcore-*-artifacts-*",
+        "arn:aws:s3:::agentcore-*-artifacts-*/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "s3:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}",
+          "s3:x-amz-acl": "bucket-owner-full-control"
+        },
+        "Bool": {
+          "aws:SecureTransport": "true"
+        }
+      }
+    },
+    {
+      "Sid": "S3SessionStateStorage",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::agentcore-*-session-state/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "s3:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        },
+        "StringLike": {
+          "s3:prefix": [
+            "sessions/${aws:PrincipalTag/Application}/*",
+            "state/${aws:PrincipalTag/Application}/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "S3EncryptionRequired",
+      "Effect": "Deny",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::agentcore-*/*"
+      ],
+      "Condition": {
+        "Null": {
+          "s3:x-amz-server-side-encryption": "true"
+        }
+      }
+    },
+    {
+      "Sid": "S3KMSEncryptionAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+        "kms:DescribeKey"
+      ],
+      "Resource": [
+        "arn:aws:kms:*:${AWS::AccountId}:key/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "s3.*.amazonaws.com",
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        },
+        "Bool": {
+          "kms:GrantIsForAWSResource": "true"
+        }
+      }
+    },
+    {
+      "Sid": "S3BucketLocationCheck",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketTagging"
+      ],
+      "Resource": [
+        "arn:aws:s3:::agentcore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "s3:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    }
+  ]
+}

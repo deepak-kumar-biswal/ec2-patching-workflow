@@ -1,0 +1,79 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BedrockAgentServiceTrust",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "bedrock.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${AWS::AccountId}"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "arn:aws:bedrock:*:${AWS::AccountId}:agent/*"
+        }
+      }
+    },
+    {
+      "Sid": "BedrockKnowledgeBaseServiceTrust",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "bedrock.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${AWS::AccountId}"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*"
+        }
+      }
+    },
+    {
+      "Sid": "LambdaServiceTrust",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${AWS::AccountId}"
+        }
+      }
+    },
+    {
+      "Sid": "CrossAccountAgentTrust",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::${TrustedAccountId}:root"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "sts:ExternalId": "${ExternalIdParameter}"
+        },
+        "Bool": {
+          "aws:MultiFactorAuthPresent": "true"
+        }
+      }
+    },
+    {
+      "Sid": "SessionTagPassthrough",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "bedrock.amazonaws.com"
+      },
+      "Action": "sts:TagSession",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${AWS::AccountId}"
+        }
+      }
+    }
+  ]
+}

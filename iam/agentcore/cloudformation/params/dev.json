@@ -1,0 +1,15 @@
+{
+  "ApplicationName": "my-multi-agent-platform",
+  "Environment": "dev",
+  "Platform": "enterprise-agentcore",
+  "EnableKnowledgeBase": "true",
+  "EnableActionGroups": "true",
+  "EnableGuardrails": "true",
+  "EnableMultiAgent": "true",
+  "EnableCrossAccount": "false",
+  "TrustedAccountIds": "",
+  "ExternalId": "",
+  "OrganizationId": "",
+  "BucketPrefix": "agentcore",
+  "VpcId": ""
+}

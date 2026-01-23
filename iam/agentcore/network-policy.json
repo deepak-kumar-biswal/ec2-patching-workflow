@@ -1,0 +1,101 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "VPCEndpointAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcEndpoints",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeNetworkInterfaces"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:Vpc": "arn:aws:ec2:*:${AWS::AccountId}:vpc/${VpcId}"
+        }
+      }
+    },
+    {
+      "Sid": "VPCEndpointCreateForBedrock",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateVpcEndpoint"
+      ],
+      "Resource": [
+        "arn:aws:ec2:*:${AWS::AccountId}:vpc-endpoint/*",
+        "arn:aws:ec2:*:${AWS::AccountId}:vpc/*",
+        "arn:aws:ec2:*:${AWS::AccountId}:subnet/*",
+        "arn:aws:ec2:*:${AWS::AccountId}:security-group/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ec2:VpceServiceName": [
+            "com.amazonaws.*.bedrock",
+            "com.amazonaws.*.bedrock-runtime",
+            "com.amazonaws.*.bedrock-agent",
+            "com.amazonaws.*.bedrock-agent-runtime"
+          ],
+          "aws:RequestTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "SecurityGroupForAgent",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress"
+      ],
+      "Resource": [
+        "arn:aws:ec2:*:${AWS::AccountId}:security-group/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        },
+        "ForAnyValue:IpAddressIfExists": {
+          "ec2:SourceIp": [
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "NetworkInterfaceForLambda",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNetworkInterface",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DeleteNetworkInterface",
+        "ec2:AssignPrivateIpAddresses",
+        "ec2:UnassignPrivateIpAddresses"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "DenyPublicNetworkAccess",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:CreateNetworkInterface"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Bool": {
+          "ec2:AssociatePublicIpAddress": "true"
+        }
+      }
+    }
+  ]
+}

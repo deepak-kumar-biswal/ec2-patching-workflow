@@ -1,0 +1,168 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BedrockAgentCoreOperations",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeAgent",
+        "bedrock:GetAgent",
+        "bedrock:GetAgentVersion",
+        "bedrock:GetAgentAlias",
+        "bedrock:ListAgents",
+        "bedrock:ListAgentVersions",
+        "bedrock:ListAgentAliases",
+        "bedrock:PrepareAgent"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent/*",
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent-alias/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Environment": "${aws:PrincipalTag/Environment}"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "AgentCore:Application",
+            "AgentCore:Environment",
+            "AgentCore:AgentId"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "BedrockAgentManagement",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:CreateAgent",
+        "bedrock:UpdateAgent",
+        "bedrock:DeleteAgent",
+        "bedrock:CreateAgentAlias",
+        "bedrock:UpdateAgentAlias",
+        "bedrock:DeleteAgentAlias",
+        "bedrock:CreateAgentActionGroup",
+        "bedrock:UpdateAgentActionGroup",
+        "bedrock:DeleteAgentActionGroup",
+        "bedrock:GetAgentActionGroup",
+        "bedrock:ListAgentActionGroups"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "AgentCore:Application",
+            "AgentCore:Environment",
+            "AgentCore:AgentId",
+            "AgentCore:CostCenter"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "BedrockAgentTagging",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:TagResource",
+        "bedrock:UntagResource",
+        "bedrock:ListTagsForResource"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent/*",
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent-alias/*",
+        "arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "BedrockPromptManagement",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:CreatePrompt",
+        "bedrock:GetPrompt",
+        "bedrock:UpdatePrompt",
+        "bedrock:DeletePrompt",
+        "bedrock:ListPrompts",
+        "bedrock:CreatePromptVersion",
+        "bedrock:GetPromptVersion",
+        "bedrock:ListPromptVersions"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:prompt/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "BedrockFlowOperations",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:CreateFlow",
+        "bedrock:GetFlow",
+        "bedrock:UpdateFlow",
+        "bedrock:DeleteFlow",
+        "bedrock:ListFlows",
+        "bedrock:CreateFlowVersion",
+        "bedrock:GetFlowVersion",
+        "bedrock:ListFlowVersions",
+        "bedrock:CreateFlowAlias",
+        "bedrock:GetFlowAlias",
+        "bedrock:UpdateFlowAlias",
+        "bedrock:DeleteFlowAlias",
+        "bedrock:ListFlowAliases",
+        "bedrock:PrepareFlow",
+        "bedrock:InvokeFlow"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:flow/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "IAMPassRoleForBedrock",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::${AWS::AccountId}:role/AgentCore*",
+        "arn:aws:iam::${AWS::AccountId}:role/service-role/AgentCore*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "bedrock.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "DenyUntaggedResourceCreation",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock:CreateAgent",
+        "bedrock:CreateKnowledgeBase",
+        "bedrock:CreatePrompt",
+        "bedrock:CreateFlow"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "aws:RequestTag/AgentCore:Application": "true"
+        }
+      }
+    }
+  ]
+}

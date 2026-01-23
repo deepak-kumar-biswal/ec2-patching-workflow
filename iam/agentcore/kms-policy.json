@@ -1,0 +1,118 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "KMSEncryptDecryptForBedrock",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+        "kms:GenerateDataKeyWithoutPlaintext",
+        "kms:DescribeKey"
+      ],
+      "Resource": [
+        "arn:aws:kms:*:${AWS::AccountId}:key/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}",
+          "kms:CallerAccount": "${AWS::AccountId}"
+        },
+        "StringLike": {
+          "kms:ViaService": [
+            "bedrock.*.amazonaws.com",
+            "s3.*.amazonaws.com",
+            "secretsmanager.*.amazonaws.com",
+            "dynamodb.*.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "KMSEncryptForAgentData",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Encrypt",
+        "kms:ReEncrypt*"
+      ],
+      "Resource": [
+        "arn:aws:kms:*:${AWS::AccountId}:key/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}",
+          "aws:ResourceTag/AgentCore:KeyPurpose": "data-encryption"
+        },
+        "Bool": {
+          "kms:GrantIsForAWSResource": "true"
+        }
+      }
+    },
+    {
+      "Sid": "KMSCreateGrantForAWSServices",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateGrant",
+        "kms:ListGrants",
+        "kms:RevokeGrant"
+      ],
+      "Resource": [
+        "arn:aws:kms:*:${AWS::AccountId}:key/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        },
+        "Bool": {
+          "kms:GrantIsForAWSResource": "true"
+        },
+        "ForAllValues:StringEquals": {
+          "kms:GrantOperations": [
+            "Decrypt",
+            "Encrypt",
+            "GenerateDataKey",
+            "GenerateDataKeyWithoutPlaintext",
+            "ReEncryptFrom",
+            "ReEncryptTo",
+            "DescribeKey"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "KMSListKeysForDiscovery",
+      "Effect": "Allow",
+      "Action": [
+        "kms:ListKeys",
+        "kms:ListAliases"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "KMSAliasAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kms:DescribeKey"
+      ],
+      "Resource": [
+        "arn:aws:kms:*:${AWS::AccountId}:alias/agentcore-*"
+      ]
+    },
+    {
+      "Sid": "DenyUnencryptedOperations",
+      "Effect": "Deny",
+      "Action": [
+        "s3:PutObject",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "s3:x-amz-server-side-encryption": "true",
+          "dynamodb:EncryptionType": "true"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "ApplicationName": "enterprise-agent-platform",
+  "Environment": "prod",
+  "Platform": "enterprise-agentcore",
+  "EnableKnowledgeBase": "true",
+  "EnableActionGroups": "true",
+  "EnableGuardrails": "true",
+  "EnableMultiAgent": "true",
+  "EnableCrossAccount": "true",
+  "TrustedAccountIds": "111111111111,222222222222",
+  "ExternalId": "agentcore-prod-external-id-change-me",
+  "OrganizationId": "o-xxxxxxxxxx",
+  "BucketPrefix": "agentcore-prod",
+  "VpcId": "vpc-xxxxxxxxxxxxxxxxx"
+}

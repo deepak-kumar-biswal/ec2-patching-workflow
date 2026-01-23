@@ -1,0 +1,171 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OpenSearchServerlessCollectionAccess",
+      "Effect": "Allow",
+      "Action": [
+        "aoss:APIAccessAll"
+      ],
+      "Resource": [
+        "arn:aws:aoss:*:${AWS::AccountId}:collection/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "OpenSearchServerlessManagement",
+      "Effect": "Allow",
+      "Action": [
+        "aoss:CreateCollection",
+        "aoss:DeleteCollection",
+        "aoss:UpdateCollection",
+        "aoss:GetCollection",
+        "aoss:ListCollections",
+        "aoss:BatchGetCollection"
+      ],
+      "Resource": [
+        "arn:aws:aoss:*:${AWS::AccountId}:collection/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "AgentCore:Application",
+            "AgentCore:Environment",
+            "AgentCore:VectorStoreId"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "OpenSearchServerlessSecurityPolicies",
+      "Effect": "Allow",
+      "Action": [
+        "aoss:CreateSecurityPolicy",
+        "aoss:GetSecurityPolicy",
+        "aoss:UpdateSecurityPolicy",
+        "aoss:DeleteSecurityPolicy",
+        "aoss:ListSecurityPolicies"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "aoss:collection": "agentcore-*"
+        }
+      }
+    },
+    {
+      "Sid": "OpenSearchServerlessAccessPolicies",
+      "Effect": "Allow",
+      "Action": [
+        "aoss:CreateAccessPolicy",
+        "aoss:GetAccessPolicy",
+        "aoss:UpdateAccessPolicy",
+        "aoss:DeleteAccessPolicy",
+        "aoss:ListAccessPolicies"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "aoss:collection": "agentcore-*"
+        }
+      }
+    },
+    {
+      "Sid": "OpenSearchServerlessVPCEndpoints",
+      "Effect": "Allow",
+      "Action": [
+        "aoss:CreateVpcEndpoint",
+        "aoss:GetVpcEndpoint",
+        "aoss:UpdateVpcEndpoint",
+        "aoss:DeleteVpcEndpoint",
+        "aoss:ListVpcEndpoints"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "OpenSearchDomainAccess",
+      "Effect": "Allow",
+      "Action": [
+        "es:ESHttpGet",
+        "es:ESHttpPost",
+        "es:ESHttpPut",
+        "es:ESHttpDelete",
+        "es:ESHttpHead"
+      ],
+      "Resource": [
+        "arn:aws:es:*:${AWS::AccountId}:domain/agentcore-*/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "OpenSearchDomainDescribe",
+      "Effect": "Allow",
+      "Action": [
+        "es:DescribeDomain",
+        "es:DescribeDomains",
+        "es:DescribeDomainConfig",
+        "es:ListDomainNames"
+      ],
+      "Resource": [
+        "arn:aws:es:*:${AWS::AccountId}:domain/agentcore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "RDSAuroraVectorAccess",
+      "Effect": "Allow",
+      "Action": [
+        "rds-data:ExecuteStatement",
+        "rds-data:BatchExecuteStatement",
+        "rds-data:BeginTransaction",
+        "rds-data:CommitTransaction",
+        "rds-data:RollbackTransaction"
+      ],
+      "Resource": [
+        "arn:aws:rds:*:${AWS::AccountId}:cluster:agentcore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "RDSDescribeAccess",
+      "Effect": "Allow",
+      "Action": [
+        "rds:DescribeDBClusters",
+        "rds:DescribeDBInstances"
+      ],
+      "Resource": [
+        "arn:aws:rds:*:${AWS::AccountId}:cluster:agentcore-*",
+        "arn:aws:rds:*:${AWS::AccountId}:db:agentcore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    }
+  ]
+}

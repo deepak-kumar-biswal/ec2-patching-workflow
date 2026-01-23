@@ -1,0 +1,157 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CrossAccountAgentInvocation",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeAgent"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:*:agent/*",
+        "arn:aws:bedrock:*:*:agent-alias/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:CrossAccountAccess": "true",
+          "aws:ResourceTag/AgentCore:TrustedAccounts": "${AWS::AccountId}"
+        },
+        "ForAnyValue:StringEquals": {
+          "aws:ResourceOrgPaths": "${aws:PrincipalOrgPaths}"
+        }
+      }
+    },
+    {
+      "Sid": "CrossAccountKnowledgeBaseRetrieval",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:Retrieve",
+        "bedrock:RetrieveAndGenerate"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:*:knowledge-base/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:CrossAccountAccess": "true"
+        },
+        "ForAnyValue:StringEquals": {
+          "aws:ResourceOrgPaths": "${aws:PrincipalOrgPaths}"
+        }
+      }
+    },
+    {
+      "Sid": "CrossAccountAssumeRole",
+      "Effect": "Allow",
+      "Action": [
+        "sts:AssumeRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:role/AgentCore-CrossAccount-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "sts:ExternalId": "${ExternalId}",
+          "aws:ResourceTag/AgentCore:Platform": "${aws:PrincipalTag/Platform}"
+        },
+        "ForAnyValue:StringEquals": {
+          "aws:ResourceOrgPaths": "${aws:PrincipalOrgPaths}"
+        }
+      }
+    },
+    {
+      "Sid": "CrossAccountS3Access",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::agentcore-shared-*",
+        "arn:aws:s3:::agentcore-shared-*/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "s3:ResourceTag/AgentCore:CrossAccountAccess": "true"
+        },
+        "StringLike": {
+          "s3:prefix": "${aws:PrincipalTag/Application}/*"
+        }
+      }
+    },
+    {
+      "Sid": "CrossAccountSecretsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:*:*:secret:agentcore/shared/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "secretsmanager:ResourceTag/AgentCore:CrossAccountAccess": "true"
+        },
+        "ForAnyValue:StringEquals": {
+          "aws:ResourceOrgPaths": "${aws:PrincipalOrgPaths}"
+        }
+      }
+    },
+    {
+      "Sid": "CrossAccountKMSDecrypt",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ],
+      "Resource": [
+        "arn:aws:kms:*:*:key/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:CrossAccountAccess": "true"
+        },
+        "StringLike": {
+          "kms:ViaService": [
+            "s3.*.amazonaws.com",
+            "secretsmanager.*.amazonaws.com",
+            "bedrock.*.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "CrossAccountEventBridge",
+      "Effect": "Allow",
+      "Action": [
+        "events:PutEvents"
+      ],
+      "Resource": [
+        "arn:aws:events:*:*:event-bus/agentcore-cross-account"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:CrossAccountAccess": "true"
+        },
+        "ForAnyValue:StringEquals": {
+          "aws:ResourceOrgPaths": "${aws:PrincipalOrgPaths}"
+        }
+      }
+    },
+    {
+      "Sid": "OrganizationsReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "organizations:DescribeOrganization",
+        "organizations:DescribeAccount",
+        "organizations:ListAccounts"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalTag/AgentCore:Role": "admin"
+        }
+      }
+    }
+  ]
+}

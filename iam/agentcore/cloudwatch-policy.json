@@ -1,0 +1,168 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudWatchLogsAgentInvocation",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/bedrock/agents/*",
+        "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/bedrock/agents/*:*",
+        "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/bedrock/knowledge-bases/*",
+        "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/bedrock/knowledge-bases/*:*",
+        "arn:aws:logs:*:${AWS::AccountId}:log-group:/agentcore/*",
+        "arn:aws:logs:*:${AWS::AccountId}:log-group:/agentcore/*:*"
+      ]
+    },
+    {
+      "Sid": "CloudWatchLogsModelInvocation",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/bedrock/modelinvocations/*",
+        "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/bedrock/modelinvocations/*:*"
+      ]
+    },
+    {
+      "Sid": "CloudWatchMetricsPublish",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricData"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "cloudwatch:namespace": [
+            "AgentCore/Agents",
+            "AgentCore/KnowledgeBases",
+            "AgentCore/ActionGroups",
+            "AgentCore/Platform",
+            "AWS/Bedrock"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "CloudWatchMetricsRead",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "cloudwatch:DescribeAlarms"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "cloudwatch:namespace": [
+            "AgentCore/*",
+            "AWS/Bedrock"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "CloudWatchAlarmsManagement",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:EnableAlarmActions",
+        "cloudwatch:DisableAlarmActions"
+      ],
+      "Resource": [
+        "arn:aws:cloudwatch:*:${AWS::AccountId}:alarm:AgentCore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "CloudWatchDashboards",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetDashboard",
+        "cloudwatch:ListDashboards",
+        "cloudwatch:PutDashboard",
+        "cloudwatch:DeleteDashboards"
+      ],
+      "Resource": [
+        "arn:aws:cloudwatch::${AWS::AccountId}:dashboard/AgentCore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "XRayTracing",
+      "Effect": "Allow",
+      "Action": [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords",
+        "xray:GetSamplingRules",
+        "xray:GetSamplingTargets",
+        "xray:GetSamplingStatisticSummaries"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "XRayReadTraces",
+      "Effect": "Allow",
+      "Action": [
+        "xray:GetTraceSummaries",
+        "xray:BatchGetTraces",
+        "xray:GetServiceGraph",
+        "xray:GetTraceGraph"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "xray:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "CloudWatchInsightsQuery",
+      "Effect": "Allow",
+      "Action": [
+        "logs:StartQuery",
+        "logs:StopQuery",
+        "logs:GetQueryResults",
+        "logs:FilterLogEvents"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/bedrock/*",
+        "arn:aws:logs:*:${AWS::AccountId}:log-group:/agentcore/*"
+      ]
+    },
+    {
+      "Sid": "BedrockInvocationLogging",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:GetModelInvocationLoggingConfiguration",
+        "bedrock:PutModelInvocationLoggingConfiguration"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalTag/AgentCore:Role": "admin"
+        }
+      }
+    }
+  ]
+}

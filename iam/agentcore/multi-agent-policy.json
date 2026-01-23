@@ -1,0 +1,185 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "MultiAgentInvocation",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeAgent"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent/*",
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent-alias/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Platform": "${aws:PrincipalTag/Platform}"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "arn:aws:bedrock:*:${AWS::AccountId}:agent/*"
+        }
+      }
+    },
+    {
+      "Sid": "AgentCollaborationOrchestration",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:GetAgent",
+        "bedrock:GetAgentAlias",
+        "bedrock:ListAgents",
+        "bedrock:ListAgentAliases"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent/*",
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent-alias/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Platform": "${aws:PrincipalTag/Platform}"
+        }
+      }
+    },
+    {
+      "Sid": "AgentSessionManagement",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeAgent"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent-alias/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "bedrock:AgentAliasTag/AgentCore:AllowCollaboration": "true"
+        }
+      }
+    },
+    {
+      "Sid": "SharedKnowledgeBaseAccess",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:Retrieve",
+        "bedrock:RetrieveAndGenerate"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:knowledge-base/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:SharedAccess": "true",
+          "aws:ResourceTag/AgentCore:Platform": "${aws:PrincipalTag/Platform}"
+        }
+      }
+    },
+    {
+      "Sid": "AgentMemoryAccess",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:GetAgentMemory",
+        "bedrock:DeleteAgentMemory"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:agent-alias/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Application": "${aws:PrincipalTag/Application}"
+        }
+      }
+    },
+    {
+      "Sid": "CrossAgentEventBridge",
+      "Effect": "Allow",
+      "Action": [
+        "events:PutEvents"
+      ],
+      "Resource": [
+        "arn:aws:events:*:${AWS::AccountId}:event-bus/agentcore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Platform": "${aws:PrincipalTag/Platform}"
+        },
+        "StringLike": {
+          "events:source": "agentcore.*"
+        }
+      }
+    },
+    {
+      "Sid": "AgentCoordinationSNS",
+      "Effect": "Allow",
+      "Action": [
+        "sns:Publish"
+      ],
+      "Resource": [
+        "arn:aws:sns:*:${AWS::AccountId}:agentcore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Platform": "${aws:PrincipalTag/Platform}"
+        }
+      }
+    },
+    {
+      "Sid": "AgentCoordinationSQS",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": [
+        "arn:aws:sqs:*:${AWS::AccountId}:agentcore-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Platform": "${aws:PrincipalTag/Platform}"
+        }
+      }
+    },
+    {
+      "Sid": "AgentStateDynamoDB",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:${AWS::AccountId}:table/AgentCore-*",
+        "arn:aws:dynamodb:*:${AWS::AccountId}:table/AgentCore-*/index/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Platform": "${aws:PrincipalTag/Platform}"
+        },
+        "ForAllValues:StringEquals": {
+          "dynamodb:LeadingKeys": [
+            "${aws:PrincipalTag/Application}"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AgentFlowOrchestration",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeFlow",
+        "bedrock:GetFlow",
+        "bedrock:GetFlowAlias"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*:${AWS::AccountId}:flow/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/AgentCore:Platform": "${aws:PrincipalTag/Platform}"
+        }
+      }
+    }
+  ]
+}
